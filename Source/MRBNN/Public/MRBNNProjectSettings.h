@@ -46,6 +46,9 @@ public:
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Baking")
 	FDirectoryPath BakeDestinationRepositoryRoot;
 
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Debug")
+	bool bEnableVerboseLogging = false;
+
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Realtime", meta = (ClampMin = "64", UIMin = "128", UIMax = "1024"))
 	int32 RealtimeOutputWidth = 384;
 
@@ -69,105 +72,6 @@ public:
 
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Rendering")
 	FMRBNNRenderSettings DefaultRenderSettings;
-
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Volume", meta = (ClampMin = "1", UIMin = "4", UIMax = "32"))
-	int32 VolumeSliceCount = 12;
-
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Volume", meta = (ClampMin = "1.0", UIMin = "50.0", UIMax = "500.0"))
-	FVector VolumeExtent = FVector(120.0f, 220.0f, 160.0f);
-
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Volume")
-	bool bVolumeShowBillboard = false;
-
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Volume")
-	bool bVolumeUseRaymarchShader = true;
-
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Volume")
-	bool bVolumeShowDensityPreview = false;
-
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Volume")
-	bool bVolumeFitDensityPreviewToBounds = true;
-
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Volume", meta = (ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.01", UIMax = "0.25"))
-	float VolumeSliceOpacity = 0.075f;
-
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Volume", meta = (ClampMin = "0.0", UIMin = "0.1", UIMax = "8.0"))
-	float VolumeBrightness = 1.8f;
-
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Volume", meta = (ClampMin = "16", ClampMax = "128", UIMin = "32", UIMax = "96"))
-	int32 VolumeRaymarchTextureResolution = 80;
-
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Volume")
-	bool bVolumeRaymarchFitToDensityBounds = true;
-
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Volume", meta = (EditCondition = "bVolumeRaymarchFitToDensityBounds", ClampMin = "0.0", UIMin = "0.0", UIMax = "32.0"))
-	float VolumeRaymarchBoundsThreshold = 4.0f;
-
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Volume", meta = (EditCondition = "bVolumeRaymarchFitToDensityBounds", ClampMin = "0.0", ClampMax = "0.25", UIMin = "0.02", UIMax = "0.15"))
-	float VolumeRaymarchBoundsPadding = 0.08f;
-
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Volume", meta = (ClampMin = "4", ClampMax = "96", UIMin = "16", UIMax = "64"))
-	int32 VolumeRaymarchStepCount = 40;
-
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Volume", meta = (ClampMin = "0.0", UIMin = "0.0", UIMax = "20.0"))
-	float VolumeRaymarchInputThreshold = 4.0f;
-
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Volume", meta = (ClampMin = "1.0", UIMin = "20.0", UIMax = "180.0"))
-	float VolumeRaymarchNormalizeDensity = 96.0f;
-
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Volume", meta = (ClampMin = "0.1", UIMin = "0.3", UIMax = "2.0"))
-	float VolumeRaymarchDensityPower = 0.82f;
-
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Volume", meta = (ClampMin = "0.0", UIMin = "0.01", UIMax = "0.25"))
-	float VolumeRaymarchOpacity = 0.055f;
-
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Volume", meta = (ClampMin = "0.0", UIMin = "0.0", UIMax = "2.0"))
-	float VolumeRaymarchShadowStrength = 0.55f;
-
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Volume", meta = (ClampMin = "0.0", UIMin = "0.01", UIMax = "0.25"))
-	float VolumeRaymarchLightStep = 0.075f;
-
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Volume")
-	FLinearColor VolumeRaymarchCloudColor = FLinearColor(0.86f, 0.90f, 0.92f, 1.0f);
-
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Volume|Direct Light", meta = (ClampMin = "0.0", UIMin = "0.0", UIMax = "4.0"))
-	float VolumeRaymarchDirectLightIntensityScale = 1.0f;
-
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Volume|Direct Light", meta = (ClampMin = "0", ClampMax = "8", UIMin = "0", UIMax = "6"))
-	int32 VolumeRaymarchDirectShadowSteps = 4;
-
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Volume|Direct Light", meta = (ClampMin = "0.0", UIMin = "0.1", UIMax = "4.0"))
-	float VolumeRaymarchDirectShadowDensity = 1.35f;
-
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Volume|Direct Light", meta = (ClampMin = "-0.85", ClampMax = "0.85", UIMin = "-0.2", UIMax = "0.75"))
-	float VolumeRaymarchPhaseG = 0.35f;
-
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Volume|Direct Light", meta = (ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
-	float VolumeRaymarchPhaseStrength = 0.75f;
-
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Volume", meta = (ClampMin = "8", ClampMax = "96", UIMin = "16", UIMax = "64"))
-	int32 VolumeDensitySampleResolution = 48;
-
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Volume", meta = (ClampMin = "1", ClampMax = "20000", UIMin = "512", UIMax = "12000"))
-	int32 VolumeMaxDensityVoxelInstances = 4200;
-
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Volume", meta = (ClampMin = "0.0", UIMin = "0.0", UIMax = "80.0"))
-	float VolumeDensityThreshold = 10.0f;
-
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Volume", meta = (ClampMin = "0.1", UIMin = "0.5", UIMax = "5.0"))
-	float VolumeDensityVoxelScale = 2.85f;
-
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Volume", meta = (ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.02", UIMax = "0.5"))
-	float VolumeDensityVoxelOpacity = 0.17f;
-
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Volume", meta = (ClampMin = "0.1", ClampMax = "1.0", UIMin = "0.5", UIMax = "1.0"))
-	float VolumeDensityBoundsFill = 0.88f;
-
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Volume", meta = (ClampMin = "0.0", UIMin = "0.0", UIMax = "2.0"))
-	float VolumeAmbientRelight = 0.55f;
-
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Volume", meta = (ClampMin = "0.0", UIMin = "0.0", UIMax = "2.0"))
-	float VolumeDirectionalRelight = 0.45f;
 
 	UFUNCTION(BlueprintCallable, Category = "MRBNN|Paths")
 	static FString ResolveMRBNNPath(const FString& PathWithTokens);

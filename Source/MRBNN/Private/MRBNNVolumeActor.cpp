@@ -24,6 +24,7 @@
 #include "Interfaces/IPluginManager.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
+#include "Math/Float16.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "MRBNNVolumeComponent.h"
@@ -116,6 +117,157 @@ float Smooth01(float Value)
 {
 	const float T = FMath::Clamp(Value, 0.0f, 1.0f);
 	return T * T * (3.0f - 2.0f * T);
+}
+
+struct FMRBNNEncodingLevelInfo
+{
+	int32 Resolution = 0;
+	int32 FeatureCount = 0;
+	int64 ValueOffset = 0;
+	int64 PaddedCellCount = 0;
+
+	bool IsValid() const
+	{
+		return Resolution > 0 && FeatureCount > 0 && ValueOffset >= 0 && PaddedCellCount > 0;
+	}
+};
+
+int64 IntPow(int64 Value, int32 Power)
+{
+	int64 Result = 1;
+	for (int32 Index = 0; Index < Power; ++Index)
+	{
+		Result *= Value;
+	}
+	return Result;
+}
+
+int64 NextMultiple(int64 Value, int64 Multiple)
+{
+	if (Multiple <= 0)
+	{
+		return Value;
+	}
+	return ((Value + Multiple - 1) / Multiple) * Multiple;
+}
+
+int32 ComputeEncodingResolution(int32 Level, double BaseResolution, double PerLevelScale)
+{
+	const double GridScale = FMath::Pow(PerLevelScale, static_cast<double>(Level)) * BaseResolution - 1.0;
+	return FMath::Max(FMath::CeilToInt(GridScale) + 1, 1);
+}
+
+bool TryBuildEncodingLevelInfo(
+	const TSharedPtr<FJsonObject>& Config,
+	const FString& EncodingKey,
+	int32 InputDims,
+	int32 RequestedLevel,
+	int64 RawByteCount,
+	FMRBNNEncodingLevelInfo& OutInfo)
+{
+	OutInfo = FMRBNNEncodingLevelInfo();
+
+	const TSharedPtr<FJsonObject>* EncodingObject = nullptr;
+	if (!Config.IsValid() || !Config->TryGetObjectField(EncodingKey, EncodingObject) || !EncodingObject || !EncodingObject->IsValid())
+	{
+		return false;
+	}
+
+	double LevelCountNumber = 0.0;
+	double BaseResolutionNumber = 0.0;
+	double PerLevelScaleNumber = 0.0;
+	double FeatureCountNumber = 0.0;
+	if (!(*EncodingObject)->TryGetNumberField(TEXT("n_levels"), LevelCountNumber) ||
+		!(*EncodingObject)->TryGetNumberField(TEXT("base_resolution"), BaseResolutionNumber) ||
+		!(*EncodingObject)->TryGetNumberField(TEXT("per_level_scale"), PerLevelScaleNumber) ||
+		!(*EncodingObject)->TryGetNumberField(TEXT("n_features_per_level"), FeatureCountNumber))
+	{
+		return false;
+	}
+
+	const int32 LevelCount = FMath::Max(FMath::RoundToInt(LevelCountNumber), 0);
+	const int32 FeatureCount = FMath::Max(FMath::RoundToInt(FeatureCountNumber), 0);
+	if (LevelCount <= 0 || FeatureCount <= 0 || InputDims <= 0)
+	{
+		return false;
+	}
+
+	const int32 Level = FMath::Clamp(RequestedLevel, 0, LevelCount - 1);
+	int64 CellOffset = 0;
+	for (int32 LevelIndex = 0; LevelIndex < Level; ++LevelIndex)
+	{
+		const int32 LevelResolution = ComputeEncodingResolution(LevelIndex, BaseResolutionNumber, PerLevelScaleNumber);
+		CellOffset += NextMultiple(IntPow(LevelResolution, InputDims), 8);
+	}
+
+	const int32 Resolution = ComputeEncodingResolution(Level, BaseResolutionNumber, PerLevelScaleNumber);
+	const int64 PaddedCellCount = NextMultiple(IntPow(Resolution, InputDims), 8);
+	const int64 ValueOffset = CellOffset * FeatureCount;
+	const int64 RequiredByteCount = (ValueOffset + PaddedCellCount * FeatureCount) * static_cast<int64>(sizeof(FFloat16));
+	if (RequiredByteCount > RawByteCount)
+	{
+		return false;
+	}
+
+	OutInfo.Resolution = Resolution;
+	OutInfo.FeatureCount = FeatureCount;
+	OutInfo.ValueOffset = ValueOffset;
+	OutInfo.PaddedCellCount = PaddedCellCount;
+	return true;
+}
+
+float ReadHalfFeatureValue(const TArray<uint8>& RawBytes, int64 HalfIndex)
+{
+	const int64 ByteIndex = HalfIndex * static_cast<int64>(sizeof(FFloat16));
+	if (ByteIndex < 0 || ByteIndex + static_cast<int64>(sizeof(FFloat16)) > RawBytes.Num())
+	{
+		return 0.0f;
+	}
+
+	FFloat16 HalfValue;
+	FMemory::Memcpy(&HalfValue, RawBytes.GetData() + ByteIndex, sizeof(FFloat16));
+	const float Value = HalfValue.GetFloat();
+	return FMath::IsFinite(Value) ? Value : 0.0f;
+}
+
+float SampleEncodingMeanAbsNearest(const TArray<uint8>& RawBytes, const FMRBNNEncodingLevelInfo& Info, const FVector3f& Coord)
+{
+	if (!Info.IsValid() || RawBytes.IsEmpty())
+	{
+		return 0.0f;
+	}
+
+	const int32 Last = FMath::Max(Info.Resolution - 1, 0);
+	const int32 X = FMath::Clamp(FMath::RoundToInt(FMath::Clamp(Coord.X, 0.0f, 1.0f) * static_cast<float>(Last)), 0, Last);
+	const int32 Y = FMath::Clamp(FMath::RoundToInt(FMath::Clamp(Coord.Y, 0.0f, 1.0f) * static_cast<float>(Last)), 0, Last);
+	const int32 Z = FMath::Clamp(FMath::RoundToInt(FMath::Clamp(Coord.Z, 0.0f, 1.0f) * static_cast<float>(Last)), 0, Last);
+	const int64 CellIndex =
+		static_cast<int64>(Z) * Info.Resolution * Info.Resolution +
+		static_cast<int64>(Y) * Info.Resolution +
+		X;
+	if (CellIndex < 0 || CellIndex >= Info.PaddedCellCount)
+	{
+		return 0.0f;
+	}
+
+	float SumAbs = 0.0f;
+	for (int32 FeatureIndex = 0; FeatureIndex < Info.FeatureCount; ++FeatureIndex)
+	{
+		const int64 HalfIndex = Info.ValueOffset + CellIndex * Info.FeatureCount + FeatureIndex;
+		SumAbs += FMath::Abs(ReadHalfFeatureValue(RawBytes, HalfIndex));
+	}
+	return SumAbs / static_cast<float>(Info.FeatureCount);
+}
+
+uint8 Quantize01(float Value)
+{
+	return static_cast<uint8>(FMath::RoundToInt(FMath::Clamp(Value, 0.0f, 1.0f) * 255.0f));
+}
+
+uint8 QuantizeFeatureEnergy(float Value, float MeanValue, float MaxValue)
+{
+	const float Scale = FMath::Max3(MeanValue * 3.0f, MaxValue * 0.22f, 0.0001f);
+	return Quantize01(Value / Scale);
 }
 }
 
@@ -274,40 +426,6 @@ void AMRBNNVolumeActor::Tick(float DeltaSeconds)
 void AMRBNNVolumeActor::ConfigureFromProjectSettings()
 {
 	const UMRBNNProjectSettings* Settings = UMRBNNProjectSettings::Get();
-	VolumeExtent = Settings->VolumeExtent;
-	bShowVolumeBillboard = Settings->bVolumeShowBillboard;
-	bUseRaymarchShader = Settings->bVolumeUseRaymarchShader;
-	bShowDensityVolume = Settings->bVolumeShowDensityPreview;
-	bFitDensityPreviewToBounds = Settings->bVolumeFitDensityPreviewToBounds;
-	SliceCount = Settings->VolumeSliceCount;
-	SliceOpacity = Settings->VolumeSliceOpacity;
-	PreviewBrightness = Settings->VolumeBrightness;
-	RaymarchTextureResolution = Settings->VolumeRaymarchTextureResolution;
-	bRaymarchFitToDensityBounds = Settings->bVolumeRaymarchFitToDensityBounds;
-	RaymarchBoundsThreshold = Settings->VolumeRaymarchBoundsThreshold;
-	RaymarchBoundsPadding = Settings->VolumeRaymarchBoundsPadding;
-	RaymarchStepCount = Settings->VolumeRaymarchStepCount;
-	RaymarchInputThreshold = Settings->VolumeRaymarchInputThreshold;
-	RaymarchNormalizeDensity = Settings->VolumeRaymarchNormalizeDensity;
-	RaymarchDensityPower = Settings->VolumeRaymarchDensityPower;
-	RaymarchOpacity = Settings->VolumeRaymarchOpacity;
-	RaymarchShadowStrength = Settings->VolumeRaymarchShadowStrength;
-	RaymarchLightStep = Settings->VolumeRaymarchLightStep;
-	RaymarchCloudColor = Settings->VolumeRaymarchCloudColor;
-	RaymarchDirectLightIntensityScale = Settings->VolumeRaymarchDirectLightIntensityScale;
-	RaymarchDirectShadowSteps = Settings->VolumeRaymarchDirectShadowSteps;
-	RaymarchDirectShadowDensity = Settings->VolumeRaymarchDirectShadowDensity;
-	RaymarchPhaseG = Settings->VolumeRaymarchPhaseG;
-	RaymarchPhaseStrength = Settings->VolumeRaymarchPhaseStrength;
-	DensitySampleResolution = Settings->VolumeDensitySampleResolution;
-	MaxDensityVoxelInstances = Settings->VolumeMaxDensityVoxelInstances;
-	DensityThreshold = Settings->VolumeDensityThreshold;
-	DensityVoxelScale = Settings->VolumeDensityVoxelScale;
-	DensityVoxelOpacity = Settings->VolumeDensityVoxelOpacity;
-	DensityBoundsFill = Settings->VolumeDensityBoundsFill;
-	AmbientRelight = Settings->VolumeAmbientRelight;
-	DirectionalRelight = Settings->VolumeDirectionalRelight;
-
 	if (MRBNNVolume)
 	{
 		MRBNNVolume->ApplyRealtimePreviewSettings();
@@ -416,6 +534,12 @@ void AMRBNNVolumeActor::ApplyRealtimePreviewSettings()
 	RaymarchDirectShadowDensity = 1.35f;
 	RaymarchPhaseG = 0.35f;
 	RaymarchPhaseStrength = 0.75f;
+	bUseBakedFeatureLighting = true;
+	RaymarchBakedFeatureLevel = 2;
+	RaymarchBakedFeatureContribution = 0.65f;
+	RaymarchMultiScatterContribution = 0.75f;
+	RaymarchFeatureAlbedoBlend = 0.25f;
+	RaymarchBakedFeatureTint = FLinearColor(1.0f, 0.965f, 0.88f, 1.0f);
 	DensitySampleResolution = 48;
 	MaxDensityVoxelInstances = 4200;
 	DensityThreshold = 10.0f;
@@ -457,6 +581,12 @@ void AMRBNNVolumeActor::ApplyMobilePreviewSettings()
 	RaymarchDirectShadowDensity = 1.1f;
 	RaymarchPhaseG = 0.25f;
 	RaymarchPhaseStrength = 0.55f;
+	bUseBakedFeatureLighting = true;
+	RaymarchBakedFeatureLevel = 1;
+	RaymarchBakedFeatureContribution = 0.45f;
+	RaymarchMultiScatterContribution = 0.5f;
+	RaymarchFeatureAlbedoBlend = 0.18f;
+	RaymarchBakedFeatureTint = FLinearColor(1.0f, 0.965f, 0.88f, 1.0f);
 	DensitySampleResolution = 36;
 	MaxDensityVoxelInstances = 2200;
 	DensityThreshold = 20.0f;
@@ -632,6 +762,7 @@ bool AMRBNNVolumeActor::BuildRaymarchVolumeTexture()
 	if (!bUseRaymarchShader)
 	{
 		RaymarchDensityTexture = nullptr;
+		RaymarchFeatureTexture = nullptr;
 		RaymarchTextureBuildKey.Empty();
 		if (VolumeRaymarchMesh)
 		{
@@ -648,6 +779,7 @@ bool AMRBNNVolumeActor::BuildRaymarchVolumeTexture()
 	{
 		UE_LOG(LogTemp, Warning, TEXT("MRBNN raymarch texture could not resolve density volume: %s"), *Error.ToString());
 		RaymarchDensityTexture = nullptr;
+		RaymarchFeatureTexture = nullptr;
 		RaymarchTextureBuildKey.Empty();
 		if (VolumeRaymarchMesh)
 		{
@@ -657,7 +789,72 @@ bool AMRBNNVolumeActor::BuildRaymarchVolumeTexture()
 	}
 
 	const FDateTime VolumeTimestamp = IFileManager::Get().GetTimeStamp(*VolumePath);
-	const FString BuildKey = FString::Printf(
+	TArray<uint8> RawBaseFeatureBytes;
+	TArray<uint8> RawMultiScatterBytes;
+	TArray<uint8> RawAnisotropyBytes;
+	FMRBNNEncodingLevelInfo BaseFeatureInfo;
+	FMRBNNEncodingLevelInfo MultiScatterInfo;
+	FMRBNNEncodingLevelInfo AnisotropyInfo;
+	bool bHasBakedFeatureSource = false;
+	FString FeatureSourceKey = TEXT("feature=off");
+
+	if (bUseBakedFeatureLighting && MRBNNVolume)
+	{
+		UMRBNNBakedVolumeData* Data = MRBNNVolume->BakedData;
+		if (!Data)
+		{
+			FText DefaultDataError;
+			Data = UMRBNNProjectSettings::Get()->CreateTransientDefaultBakedData(this, DefaultDataError);
+			MRBNNVolume->BakedData = Data;
+		}
+
+		FString WorkingDirectory;
+		FString RepositoryRoot;
+		FText PathError;
+		TSharedPtr<FJsonObject> Config;
+		const FString ConfigPath = Data && Data->ResolvePaths(WorkingDirectory, RepositoryRoot, PathError)
+			? FPaths::Combine(WorkingDirectory, TEXT("config.json"))
+			: FString();
+		const FString BaseFeaturePath = FPaths::Combine(WorkingDirectory, TEXT("base.bin"));
+		const FString MultiScatterPath = FPaths::Combine(WorkingDirectory, TEXT("ms0.bin"));
+		const FString AnisotropyPath = FPaths::Combine(WorkingDirectory, TEXT("ms1.bin"));
+		const int32 FeatureLevel = FMath::Clamp(RaymarchBakedFeatureLevel, 0, 3);
+		if (!ConfigPath.IsEmpty() &&
+			ReadJsonObject(ConfigPath, Config) &&
+			FFileHelper::LoadFileToArray(RawBaseFeatureBytes, *BaseFeaturePath) &&
+			FFileHelper::LoadFileToArray(RawMultiScatterBytes, *MultiScatterPath) &&
+			TryBuildEncodingLevelInfo(Config, TEXT("volume_encoding"), 3, FeatureLevel, RawBaseFeatureBytes.Num(), BaseFeatureInfo) &&
+			TryBuildEncodingLevelInfo(Config, TEXT("ms_encoding"), 3, FeatureLevel, RawMultiScatterBytes.Num(), MultiScatterInfo))
+		{
+			bHasBakedFeatureSource = true;
+			if (!FFileHelper::LoadFileToArray(RawAnisotropyBytes, *AnisotropyPath) ||
+				!TryBuildEncodingLevelInfo(Config, TEXT("ms_encoding"), 3, FeatureLevel, RawAnisotropyBytes.Num(), AnisotropyInfo))
+			{
+				RawAnisotropyBytes.Reset();
+				AnisotropyInfo = FMRBNNEncodingLevelInfo();
+			}
+
+			const FDateTime BaseTimestamp = IFileManager::Get().GetTimeStamp(*BaseFeaturePath);
+			const FDateTime MultiScatterTimestamp = IFileManager::Get().GetTimeStamp(*MultiScatterPath);
+			const FDateTime AnisotropyTimestamp = RawAnisotropyBytes.IsEmpty() ? FDateTime() : IFileManager::Get().GetTimeStamp(*AnisotropyPath);
+			FeatureSourceKey = FString::Printf(
+				TEXT("feature=on|level=%d|base=%lld|ms0=%lld|ms1=%lld"),
+				FeatureLevel,
+				BaseTimestamp.GetTicks(),
+				MultiScatterTimestamp.GetTicks(),
+				AnisotropyTimestamp.GetTicks());
+		}
+		else
+		{
+			FeatureSourceKey = FString::Printf(TEXT("feature=missing|level=%d"), FeatureLevel);
+			if (UMRBNNProjectSettings::Get()->bEnableVerboseLogging)
+			{
+				UE_LOG(LogTemp, Log, TEXT("MRBNN baked feature proxy is disabled for this build because base.bin/ms0.bin could not be read from the active data set."));
+			}
+		}
+	}
+
+	FString BuildKey = FString::Printf(
 		TEXT("%s|%lld|%d,%d,%d|%d|%d|%d|%.6f|%.6f|%.6f|%.6f|%.6f"),
 		*VolumePath,
 		VolumeTimestamp.GetTicks(),
@@ -672,6 +869,8 @@ bool AMRBNNVolumeActor::BuildRaymarchVolumeTexture()
 		RaymarchInputThreshold,
 		RaymarchNormalizeDensity,
 		RaymarchDensityPower);
+	BuildKey += TEXT("|");
+	BuildKey += FeatureSourceKey;
 	if (RaymarchDensityTexture && RaymarchTextureBuildKey == BuildKey)
 	{
 		if (VolumeRaymarchMesh)
@@ -687,6 +886,7 @@ bool AMRBNNVolumeActor::BuildRaymarchVolumeTexture()
 	{
 		UE_LOG(LogTemp, Warning, TEXT("MRBNN raymarch texture could not read volume file: %s"), *VolumePath);
 		RaymarchDensityTexture = nullptr;
+		RaymarchFeatureTexture = nullptr;
 		RaymarchTextureBuildKey.Empty();
 		if (VolumeRaymarchMesh)
 		{
@@ -700,6 +900,7 @@ bool AMRBNNVolumeActor::BuildRaymarchVolumeTexture()
 	{
 		UE_LOG(LogTemp, Warning, TEXT("MRBNN raymarch texture volume file is smaller than config resolution requires."));
 		RaymarchDensityTexture = nullptr;
+		RaymarchFeatureTexture = nullptr;
 		RaymarchTextureBuildKey.Empty();
 		if (VolumeRaymarchMesh)
 		{
@@ -724,6 +925,26 @@ bool AMRBNNVolumeActor::BuildRaymarchVolumeTexture()
 	NewTexture->Filter = TF_Bilinear;
 	NewTexture->AddressMode = TA_Clamp;
 	NewTexture->NeverStream = true;
+
+	const int64 TextureVoxelCount = static_cast<int64>(TextureResolution) * TextureResolution * TextureResolution;
+	bool bBuildFeatureTexture = bHasBakedFeatureSource;
+	TArray<float> NormalizedDensityValues;
+	TArray<float> BaseFeatureValues;
+	TArray<float> MultiScatterValues;
+	TArray<float> AnisotropyValues;
+	float BaseFeatureSum = 0.0f;
+	float MultiScatterSum = 0.0f;
+	float AnisotropySum = 0.0f;
+	float BaseFeatureMax = 0.0f;
+	float MultiScatterMax = 0.0f;
+	float AnisotropyMax = 0.0f;
+	if (bBuildFeatureTexture)
+	{
+		NormalizedDensityValues.SetNumZeroed(TextureVoxelCount);
+		BaseFeatureValues.SetNumZeroed(TextureVoxelCount);
+		MultiScatterValues.SetNumZeroed(TextureVoxelCount);
+		AnisotropyValues.SetNumZeroed(TextureVoxelCount);
+	}
 
 	const float* DensityValues = reinterpret_cast<const float*>(RawBytes.GetData() + SkipByteCount);
 	const float SafeNormalizeDensity = FMath::Max(RaymarchNormalizeDensity, 1.0f);
@@ -797,6 +1018,7 @@ bool AMRBNNVolumeActor::BuildRaymarchVolumeTexture()
 	{
 		Mip.BulkData.Unlock();
 		RaymarchDensityTexture = nullptr;
+		RaymarchFeatureTexture = nullptr;
 		RaymarchTextureBuildKey.Empty();
 		return false;
 	}
@@ -809,6 +1031,10 @@ bool AMRBNNVolumeActor::BuildRaymarchVolumeTexture()
 			const float UnitY = (static_cast<float>(Y) + 0.5f) / static_cast<float>(TextureResolution);
 			for (int32 X = 0; X < TextureResolution; ++X)
 			{
+				const int64 TextureIndex =
+					static_cast<int64>(Z) * TextureResolution * TextureResolution +
+					static_cast<int64>(Y) * TextureResolution +
+					X;
 				const float UnitX = (static_cast<float>(X) + 0.5f) / static_cast<float>(TextureResolution);
 				const FVector3f SourcePosition(
 					FMath::Lerp(static_cast<float>(SourceMin.X), static_cast<float>(SourceMax.X), UnitX),
@@ -828,6 +1054,30 @@ bool AMRBNNVolumeActor::BuildRaymarchVolumeTexture()
 				const float EdgeFade = Smooth01(EdgeDistance / 0.055f);
 				NormalizedDensity *= EdgeFade;
 
+				if (bBuildFeatureTexture)
+				{
+					NormalizedDensityValues[TextureIndex] = NormalizedDensity;
+					const FVector3f FeatureCoord(
+						LastSourceZ > 0 ? SourcePosition.Z / static_cast<float>(LastSourceZ) : 0.0f,
+						LastSourceY > 0 ? SourcePosition.Y / static_cast<float>(LastSourceY) : 0.0f,
+						LastSourceX > 0 ? SourcePosition.X / static_cast<float>(LastSourceX) : 0.0f);
+					const float BaseEnergy = SampleEncodingMeanAbsNearest(RawBaseFeatureBytes, BaseFeatureInfo, FeatureCoord);
+					const float MultiScatterEnergy = SampleEncodingMeanAbsNearest(RawMultiScatterBytes, MultiScatterInfo, FeatureCoord);
+					const float AnisotropyEnergy = RawAnisotropyBytes.IsEmpty()
+						? BaseEnergy * 0.35f
+						: SampleEncodingMeanAbsNearest(RawAnisotropyBytes, AnisotropyInfo, FeatureCoord);
+
+					BaseFeatureValues[TextureIndex] = BaseEnergy;
+					MultiScatterValues[TextureIndex] = MultiScatterEnergy;
+					AnisotropyValues[TextureIndex] = AnisotropyEnergy;
+					BaseFeatureSum += BaseEnergy;
+					MultiScatterSum += MultiScatterEnergy;
+					AnisotropySum += AnisotropyEnergy;
+					BaseFeatureMax = FMath::Max(BaseFeatureMax, BaseEnergy);
+					MultiScatterMax = FMath::Max(MultiScatterMax, MultiScatterEnergy);
+					AnisotropyMax = FMath::Max(AnisotropyMax, AnisotropyEnergy);
+				}
+
 				const uint8 QuantizedDensity = static_cast<uint8>(FMath::RoundToInt(NormalizedDensity * 255.0f));
 				*MipData++ = FColor(QuantizedDensity, QuantizedDensity, QuantizedDensity, QuantizedDensity);
 			}
@@ -837,7 +1087,63 @@ bool AMRBNNVolumeActor::BuildRaymarchVolumeTexture()
 	Mip.BulkData.Unlock();
 	NewTexture->UpdateResource();
 
+	UVolumeTexture* NewFeatureTexture = nullptr;
+	if (bBuildFeatureTexture)
+	{
+		NewFeatureTexture = UVolumeTexture::CreateTransient(TextureResolution, TextureResolution, TextureResolution, PF_B8G8R8A8, TEXT("MRBNN_BakedFeatureVolume"));
+		if (NewFeatureTexture && NewFeatureTexture->GetPlatformData() && !NewFeatureTexture->GetPlatformData()->Mips.IsEmpty())
+		{
+			NewFeatureTexture->SRGB = false;
+			NewFeatureTexture->CompressionSettings = TC_VectorDisplacementmap;
+			NewFeatureTexture->MipGenSettings = TMGS_NoMipmaps;
+			NewFeatureTexture->Filter = TF_Bilinear;
+			NewFeatureTexture->AddressMode = TA_Clamp;
+			NewFeatureTexture->NeverStream = true;
+
+			FTexture2DMipMap& FeatureMip = NewFeatureTexture->GetPlatformData()->Mips[0];
+			FColor* FeatureMipData = reinterpret_cast<FColor*>(FeatureMip.BulkData.Lock(LOCK_READ_WRITE));
+			if (FeatureMipData)
+			{
+				const float InvVoxelCount = TextureVoxelCount > 0 ? 1.0f / static_cast<float>(TextureVoxelCount) : 0.0f;
+				const float BaseMean = BaseFeatureSum * InvVoxelCount;
+				const float MultiScatterMean = MultiScatterSum * InvVoxelCount;
+				const float AnisotropyMean = AnisotropySum * InvVoxelCount;
+				for (int64 TextureIndex = 0; TextureIndex < TextureVoxelCount; ++TextureIndex)
+				{
+					const uint8 BaseQ = QuantizeFeatureEnergy(BaseFeatureValues[TextureIndex], BaseMean, BaseFeatureMax);
+					const uint8 MultiScatterQ = QuantizeFeatureEnergy(MultiScatterValues[TextureIndex], MultiScatterMean, MultiScatterMax);
+					const uint8 AnisotropyQ = QuantizeFeatureEnergy(AnisotropyValues[TextureIndex], AnisotropyMean, AnisotropyMax);
+					const float FeatureConfidence = FMath::Max(
+						NormalizedDensityValues[TextureIndex],
+						FMath::Max(static_cast<float>(BaseQ), static_cast<float>(MultiScatterQ)) / 255.0f * 0.65f);
+					*FeatureMipData++ = FColor(BaseQ, MultiScatterQ, AnisotropyQ, Quantize01(FeatureConfidence));
+				}
+				FeatureMip.BulkData.Unlock();
+				NewFeatureTexture->UpdateResource();
+
+				if (UMRBNNProjectSettings::Get()->bEnableVerboseLogging)
+				{
+					UE_LOG(LogTemp, Log, TEXT("MRBNN baked feature proxy built: %d^3 level=%d baseRes=%d msRes=%d"),
+						TextureResolution,
+						FMath::Clamp(RaymarchBakedFeatureLevel, 0, 3),
+						BaseFeatureInfo.Resolution,
+						MultiScatterInfo.Resolution);
+				}
+			}
+			else
+			{
+				FeatureMip.BulkData.Unlock();
+				NewFeatureTexture = nullptr;
+			}
+		}
+		else
+		{
+			NewFeatureTexture = nullptr;
+		}
+	}
+
 	RaymarchDensityTexture = NewTexture;
+	RaymarchFeatureTexture = NewFeatureTexture;
 	RaymarchTextureBuildKey = BuildKey;
 	if (VolumeRaymarchMesh)
 	{
@@ -1245,12 +1551,18 @@ void AMRBNNVolumeActor::UpdateRaymarchMaterial()
 	const float SafeDirectShadowDensity = FMath::Max(RaymarchDirectShadowDensity, 0.0f);
 	const float SafePhaseG = FMath::Clamp(RaymarchPhaseG, -0.85f, 0.85f);
 	const float SafePhaseStrength = FMath::Clamp(RaymarchPhaseStrength, 0.0f, 1.0f);
+	const float SafeUseBakedFeatures = (bUseBakedFeatureLighting && RaymarchFeatureTexture) ? 1.0f : 0.0f;
+	const float SafeBakedFeatureContribution = FMath::Clamp(RaymarchBakedFeatureContribution, 0.0f, 2.0f);
+	const float SafeMultiScatterContribution = FMath::Clamp(RaymarchMultiScatterContribution, 0.0f, 2.0f);
+	const float SafeFeatureAlbedoBlend = FMath::Clamp(RaymarchFeatureAlbedoBlend, 0.0f, 1.0f);
 	const bool bParametersUnchanged =
 		LastAppliedRaymarchDensityTexture == RaymarchDensityTexture &&
+		LastAppliedRaymarchFeatureTexture == RaymarchFeatureTexture &&
 		LastAppliedRaymarchTransform.Equals(CurrentTransform) &&
 		LastAppliedRaymarchLightDirection.Equals(LightDirection, KINDA_SMALL_NUMBER) &&
 		LastAppliedRaymarchDirectLightColor == CurrentRaymarchDirectLightColor &&
 		LastAppliedRaymarchCloudColor == RaymarchCloudColor &&
+		LastAppliedRaymarchBakedFeatureTint == RaymarchBakedFeatureTint &&
 		LastAppliedRaymarchExtent.Equals(SafeExtent, KINDA_SMALL_NUMBER) &&
 		LastAppliedRaymarchStepCount == SafeStepCount &&
 		LastAppliedRaymarchDirectShadowSteps == SafeDirectShadowSteps &&
@@ -1263,13 +1575,18 @@ void AMRBNNVolumeActor::UpdateRaymarchMaterial()
 		FMath::IsNearlyEqual(LastAppliedRaymarchDirectLightIntensity, SafeDirectLightIntensity) &&
 		FMath::IsNearlyEqual(LastAppliedRaymarchDirectShadowDensity, SafeDirectShadowDensity) &&
 		FMath::IsNearlyEqual(LastAppliedRaymarchPhaseG, SafePhaseG) &&
-		FMath::IsNearlyEqual(LastAppliedRaymarchPhaseStrength, SafePhaseStrength);
+		FMath::IsNearlyEqual(LastAppliedRaymarchPhaseStrength, SafePhaseStrength) &&
+		FMath::IsNearlyEqual(LastAppliedRaymarchUseBakedFeatures, SafeUseBakedFeatures) &&
+		FMath::IsNearlyEqual(LastAppliedRaymarchBakedFeatureContribution, SafeBakedFeatureContribution) &&
+		FMath::IsNearlyEqual(LastAppliedRaymarchMultiScatterContribution, SafeMultiScatterContribution) &&
+		FMath::IsNearlyEqual(LastAppliedRaymarchFeatureAlbedoBlend, SafeFeatureAlbedoBlend);
 	if (bParametersUnchanged)
 	{
 		return;
 	}
 
 	RaymarchMaterialInstance->SetTextureParameterValue(TEXT("MRBNNDensityTexture"), RaymarchDensityTexture);
+	RaymarchMaterialInstance->SetTextureParameterValue(TEXT("MRBNNFeatureTexture"), RaymarchFeatureTexture ? RaymarchFeatureTexture : RaymarchDensityTexture);
 	RaymarchMaterialInstance->SetVectorParameterValue(TEXT("MRBNNWorldToLocal0"), FLinearColor(WorldToLocal.M[0][0], WorldToLocal.M[1][0], WorldToLocal.M[2][0], 0.0f));
 	RaymarchMaterialInstance->SetVectorParameterValue(TEXT("MRBNNWorldToLocal1"), FLinearColor(WorldToLocal.M[0][1], WorldToLocal.M[1][1], WorldToLocal.M[2][1], 0.0f));
 	RaymarchMaterialInstance->SetVectorParameterValue(TEXT("MRBNNWorldToLocal2"), FLinearColor(WorldToLocal.M[0][2], WorldToLocal.M[1][2], WorldToLocal.M[2][2], 0.0f));
@@ -1279,6 +1596,7 @@ void AMRBNNVolumeActor::UpdateRaymarchMaterial()
 	RaymarchMaterialInstance->SetVectorParameterValue(TEXT("MRBNNLightDirectionLocal"), FLinearColor(LightDirection.X, LightDirection.Y, LightDirection.Z, 0.0f));
 	RaymarchMaterialInstance->SetVectorParameterValue(TEXT("MRBNNCloudColor"), RaymarchCloudColor);
 	RaymarchMaterialInstance->SetVectorParameterValue(TEXT("MRBNNDirectLightColor"), CurrentRaymarchDirectLightColor);
+	RaymarchMaterialInstance->SetVectorParameterValue(TEXT("MRBNNBakedFeatureTint"), RaymarchBakedFeatureTint);
 
 	RaymarchMaterialInstance->SetScalarParameterValue(TEXT("MRBNNRaySteps"), static_cast<float>(SafeStepCount));
 	RaymarchMaterialInstance->SetScalarParameterValue(TEXT("MRBNNOpacity"), SafeOpacity);
@@ -1292,12 +1610,18 @@ void AMRBNNVolumeActor::UpdateRaymarchMaterial()
 	RaymarchMaterialInstance->SetScalarParameterValue(TEXT("MRBNNDirectShadowDensity"), SafeDirectShadowDensity);
 	RaymarchMaterialInstance->SetScalarParameterValue(TEXT("MRBNNPhaseG"), SafePhaseG);
 	RaymarchMaterialInstance->SetScalarParameterValue(TEXT("MRBNNPhaseStrength"), SafePhaseStrength);
+	RaymarchMaterialInstance->SetScalarParameterValue(TEXT("MRBNNUseBakedFeatures"), SafeUseBakedFeatures);
+	RaymarchMaterialInstance->SetScalarParameterValue(TEXT("MRBNNBakedFeatureContribution"), SafeBakedFeatureContribution);
+	RaymarchMaterialInstance->SetScalarParameterValue(TEXT("MRBNNMultiScatterContribution"), SafeMultiScatterContribution);
+	RaymarchMaterialInstance->SetScalarParameterValue(TEXT("MRBNNFeatureAlbedoBlend"), SafeFeatureAlbedoBlend);
 
 	LastAppliedRaymarchDensityTexture = RaymarchDensityTexture;
+	LastAppliedRaymarchFeatureTexture = RaymarchFeatureTexture;
 	LastAppliedRaymarchTransform = CurrentTransform;
 	LastAppliedRaymarchLightDirection = LightDirection;
 	LastAppliedRaymarchDirectLightColor = CurrentRaymarchDirectLightColor;
 	LastAppliedRaymarchCloudColor = RaymarchCloudColor;
+	LastAppliedRaymarchBakedFeatureTint = RaymarchBakedFeatureTint;
 	LastAppliedRaymarchExtent = SafeExtent;
 	LastAppliedRaymarchStepCount = SafeStepCount;
 	LastAppliedRaymarchDirectShadowSteps = SafeDirectShadowSteps;
@@ -1311,6 +1635,10 @@ void AMRBNNVolumeActor::UpdateRaymarchMaterial()
 	LastAppliedRaymarchDirectShadowDensity = SafeDirectShadowDensity;
 	LastAppliedRaymarchPhaseG = SafePhaseG;
 	LastAppliedRaymarchPhaseStrength = SafePhaseStrength;
+	LastAppliedRaymarchUseBakedFeatures = SafeUseBakedFeatures;
+	LastAppliedRaymarchBakedFeatureContribution = SafeBakedFeatureContribution;
+	LastAppliedRaymarchMultiScatterContribution = SafeMultiScatterContribution;
+	LastAppliedRaymarchFeatureAlbedoBlend = SafeFeatureAlbedoBlend;
 }
 
 void AMRBNNVolumeActor::UpdateDebugText()
@@ -1330,12 +1658,13 @@ void AMRBNNVolumeActor::UpdateDebugText()
 	if (MRBNNVolume)
 	{
 		Summary = FString::Printf(
-			TEXT("MRBNN Volume\nPreview=%s  Display=%s  Raymarch=%s %d^3/%d steps  Voxels=%d\nExtent=(%.0f %.0f %.0f)\n%s\nLastError: %s"),
+			TEXT("MRBNN Volume\nPreview=%s  Display=%s  Raymarch=%s %d^3/%d steps  Features=%s  Voxels=%d\nExtent=(%.0f %.0f %.0f)\n%s\nLastError: %s"),
 			HasRenderedPreviewTexture() ? TEXT("live") : TEXT("fallback"),
 			bUseRaymarchShader ? TEXT("volume shader") : (bShowDensityVolume ? TEXT("density voxels") : (bUseExperimentalSliceStack ? TEXT("experimental slices") : TEXT("billboard"))),
 			RaymarchDensityTexture ? TEXT("ready") : TEXT("missing"),
 			RaymarchDensityTexture ? RaymarchDensityTexture->GetSizeX() : 0,
 			FMath::Clamp(RaymarchStepCount, 4, 96),
+			RaymarchFeatureTexture ? TEXT("baked proxy") : TEXT("off"),
 			VolumeDensityVoxels ? VolumeDensityVoxels->GetInstanceCount() : 0,
 			VolumeExtent.X,
 			VolumeExtent.Y,

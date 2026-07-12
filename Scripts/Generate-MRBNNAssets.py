@@ -34,6 +34,18 @@ if (tExit <= tEnter)
     return float4(0.0, 0.0, 0.0, 0.0);
 }
 
+float3 absCamLocal = abs(camLocal);
+float cameraInside =
+    absCamLocal.x < MRBNNHalfExtent.x &&
+    absCamLocal.y < MRBNNHalfExtent.y &&
+    absCamLocal.z < MRBNNHalfExtent.z ? 1.0 : 0.0;
+float surfaceT = dot(pixelLocal - camLocal, rayLocal);
+float entryFaceTolerance = max(max(MRBNNHalfExtent.x, max(MRBNNHalfExtent.y, MRBNNHalfExtent.z)) * 0.015, 2.0);
+if (cameraInside < 0.5 && surfaceT > tEnter + entryFaceTolerance)
+{
+    return float4(0.0, 0.0, 0.0, 0.0);
+}
+
 float stepCount = clamp(MRBNNRaySteps, 4.0, 96.0);
 float dt = (tExit - tEnter) / stepCount;
 float t = tEnter + dt * 0.5;
@@ -56,6 +68,11 @@ for (int i = 0; i < 96; ++i)
     float3 localPos = camLocal + rayLocal * t;
     float3 uvw = saturate(localPos / (MRBNNHalfExtent.xyz * 2.0) + 0.5);
     float density = MRBNNDensityTexture.SampleLevel(MRBNNDensityTextureSampler, uvw, 0.0).r;
+    float4 bakedFeature = MRBNNFeatureTexture.SampleLevel(MRBNNFeatureTextureSampler, uvw, 0.0);
+    float featureMask = saturate(MRBNNUseBakedFeatures) * bakedFeature.a;
+    float baseFeature = bakedFeature.r;
+    float multiScatterFeature = bakedFeature.g;
+    float anisotropyFeature = bakedFeature.b;
     float3 edgeDistance = min(uvw, 1.0 - uvw);
     float edgeT = saturate(min(edgeDistance.x, min(edgeDistance.y, edgeDistance.z)) / 0.035);
     density *= edgeT * edgeT * (3.0 - 2.0 * edgeT);
@@ -73,12 +90,19 @@ for (int i = 0; i < 96; ++i)
         transmittance *= exp(-lightDensity * MRBNNDirectShadowDensity);
     }
     float legacyShadow = saturate(1.0 - (1.0 - transmittance) * MRBNNShadowStrength);
-    float3 directLight = MRBNNDirectLightColor.rgb * max(MRBNNDirectLightIntensity, 0.0) * MRBNNDirectional * legacyShadow * phase;
+    float bakedFeatureWeight = featureMask * clamp(MRBNNBakedFeatureContribution, 0.0, 2.0);
+    float multiScatterWeight = featureMask * clamp(MRBNNMultiScatterContribution, 0.0, 2.0);
+    float directFeature = lerp(1.0, saturate(0.78 + baseFeature * 0.5), bakedFeatureWeight);
+    float phaseFeature = lerp(1.0, 0.86 + anisotropyFeature * 0.55, bakedFeatureWeight);
+    float3 directLight = MRBNNDirectLightColor.rgb * max(MRBNNDirectLightIntensity, 0.0) * MRBNNDirectional * legacyShadow * phase * directFeature * phaseFeature;
     float3 ambientLight = float3(MRBNNAmbient, MRBNNAmbient, MRBNNAmbient);
+    ambientLight += MRBNNBakedFeatureTint.rgb * multiScatterFeature * multiScatterWeight;
     float3 lighting = ambientLight + directLight;
     float referenceLength = max(MRBNNHalfExtent.x + MRBNNHalfExtent.y + MRBNNHalfExtent.z, 1.0);
     float alpha = saturate(1.0 - exp(-density * MRBNNOpacity * 40.0 * dt / referenceLength));
-    float3 color = MRBNNCloudColor.rgb * MRBNNBrightness * lighting * lerp(0.88, 1.14, density);
+    float tintBlend = featureMask * saturate(MRBNNFeatureAlbedoBlend) * saturate(baseFeature + multiScatterFeature * 0.5);
+    float3 cloudTint = lerp(MRBNNCloudColor.rgb, MRBNNBakedFeatureTint.rgb, tintBlend);
+    float3 color = cloudTint * MRBNNBrightness * lighting * lerp(0.88, 1.14, density);
 
     accum.rgb += (1.0 - accum.a) * color * alpha;
     accum.a += (1.0 - accum.a) * alpha;
@@ -141,7 +165,7 @@ def rebuild_volume_material():
     unreal.MaterialEditingLibrary.delete_all_material_expressions(material)
     set_editor_property_if_possible(material, "blend_mode", unreal.BlendMode.BLEND_TRANSLUCENT)
     set_editor_property_if_possible(material, "shading_model", unreal.MaterialShadingModel.MSM_UNLIT)
-    set_editor_property_if_possible(material, "two_sided", False)
+    set_editor_property_if_possible(material, "two_sided", True)
     set_editor_property_if_possible(material, "used_with_static_mesh", True)
     set_editor_property_if_possible(material, "used_with_instanced_static_meshes", True)
 
@@ -155,14 +179,21 @@ def rebuild_volume_material():
         density_tex.set_editor_property("texture", default_volume_texture)
     set_editor_property_if_possible(density_tex, "sampler_type", unreal.MaterialSamplerType.SAMPLERTYPE_LINEAR_COLOR)
 
-    w2l0 = create_parameter(material, unreal.MaterialExpressionVectorParameter, "MRBNNWorldToLocal0", unreal.LinearColor(1.0, 0.0, 0.0, 0.0), -1100, 80)
-    w2l1 = create_parameter(material, unreal.MaterialExpressionVectorParameter, "MRBNNWorldToLocal1", unreal.LinearColor(0.0, 1.0, 0.0, 0.0), -1100, 180)
-    w2l2 = create_parameter(material, unreal.MaterialExpressionVectorParameter, "MRBNNWorldToLocal2", unreal.LinearColor(0.0, 0.0, 1.0, 0.0), -1100, 280)
-    actor_world_position = create_parameter(material, unreal.MaterialExpressionVectorParameter, "MRBNNActorWorldPosition", unreal.LinearColor(0.0, 0.0, 0.0, 0.0), -1100, 380)
-    half_extent = create_parameter(material, unreal.MaterialExpressionVectorParameter, "MRBNNHalfExtent", unreal.LinearColor(120.0, 220.0, 160.0, 1.0), -1100, 480)
-    light_dir = create_parameter(material, unreal.MaterialExpressionVectorParameter, "MRBNNLightDirectionLocal", unreal.LinearColor(0.35, -0.35, 0.86, 0.0), -1100, 580)
-    cloud_color = create_parameter(material, unreal.MaterialExpressionVectorParameter, "MRBNNCloudColor", unreal.LinearColor(0.86, 0.9, 0.92, 1.0), -1100, 680)
-    direct_light_color = create_parameter(material, unreal.MaterialExpressionVectorParameter, "MRBNNDirectLightColor", unreal.LinearColor(1.0, 0.96, 0.88, 1.0), -1100, 780)
+    feature_tex = unreal.MaterialEditingLibrary.create_material_expression(material, unreal.MaterialExpressionTextureObjectParameter, -1100, 40)
+    feature_tex.set_editor_property("parameter_name", "MRBNNFeatureTexture")
+    if default_volume_texture:
+        feature_tex.set_editor_property("texture", default_volume_texture)
+    set_editor_property_if_possible(feature_tex, "sampler_type", unreal.MaterialSamplerType.SAMPLERTYPE_LINEAR_COLOR)
+
+    w2l0 = create_parameter(material, unreal.MaterialExpressionVectorParameter, "MRBNNWorldToLocal0", unreal.LinearColor(1.0, 0.0, 0.0, 0.0), -1100, 140)
+    w2l1 = create_parameter(material, unreal.MaterialExpressionVectorParameter, "MRBNNWorldToLocal1", unreal.LinearColor(0.0, 1.0, 0.0, 0.0), -1100, 240)
+    w2l2 = create_parameter(material, unreal.MaterialExpressionVectorParameter, "MRBNNWorldToLocal2", unreal.LinearColor(0.0, 0.0, 1.0, 0.0), -1100, 340)
+    actor_world_position = create_parameter(material, unreal.MaterialExpressionVectorParameter, "MRBNNActorWorldPosition", unreal.LinearColor(0.0, 0.0, 0.0, 0.0), -1100, 440)
+    half_extent = create_parameter(material, unreal.MaterialExpressionVectorParameter, "MRBNNHalfExtent", unreal.LinearColor(120.0, 220.0, 160.0, 1.0), -1100, 540)
+    light_dir = create_parameter(material, unreal.MaterialExpressionVectorParameter, "MRBNNLightDirectionLocal", unreal.LinearColor(0.35, -0.35, 0.86, 0.0), -1100, 640)
+    cloud_color = create_parameter(material, unreal.MaterialExpressionVectorParameter, "MRBNNCloudColor", unreal.LinearColor(0.86, 0.9, 0.92, 1.0), -1100, 740)
+    direct_light_color = create_parameter(material, unreal.MaterialExpressionVectorParameter, "MRBNNDirectLightColor", unreal.LinearColor(1.0, 0.96, 0.88, 1.0), -1100, 840)
+    baked_feature_tint = create_parameter(material, unreal.MaterialExpressionVectorParameter, "MRBNNBakedFeatureTint", unreal.LinearColor(1.0, 0.965, 0.88, 1.0), -1100, 940)
 
     steps = create_parameter(material, unreal.MaterialExpressionScalarParameter, "MRBNNRaySteps", 40.0, -660, -220)
     opacity = create_parameter(material, unreal.MaterialExpressionScalarParameter, "MRBNNOpacity", 0.055, -660, -120)
@@ -176,6 +207,10 @@ def rebuild_volume_material():
     direct_shadow_density = create_parameter(material, unreal.MaterialExpressionScalarParameter, "MRBNNDirectShadowDensity", 1.35, -660, 680)
     phase_g = create_parameter(material, unreal.MaterialExpressionScalarParameter, "MRBNNPhaseG", 0.35, -660, 780)
     phase_strength = create_parameter(material, unreal.MaterialExpressionScalarParameter, "MRBNNPhaseStrength", 0.75, -660, 880)
+    use_baked_features = create_parameter(material, unreal.MaterialExpressionScalarParameter, "MRBNNUseBakedFeatures", 1.0, -660, 980)
+    baked_feature_contribution = create_parameter(material, unreal.MaterialExpressionScalarParameter, "MRBNNBakedFeatureContribution", 0.65, -660, 1080)
+    multi_scatter_contribution = create_parameter(material, unreal.MaterialExpressionScalarParameter, "MRBNNMultiScatterContribution", 0.75, -660, 1180)
+    feature_albedo_blend = create_parameter(material, unreal.MaterialExpressionScalarParameter, "MRBNNFeatureAlbedoBlend", 0.25, -660, 1280)
 
     custom = unreal.MaterialEditingLibrary.create_material_expression(material, unreal.MaterialExpressionCustom, -120, 80)
     custom.set_editor_property("description", "MRBNN Volume Raymarch")
@@ -185,6 +220,7 @@ def rebuild_volume_material():
         make_custom_input("PixelWS"),
         make_custom_input("CameraWS"),
         make_custom_input("MRBNNDensityTexture"),
+        make_custom_input("MRBNNFeatureTexture"),
         make_custom_input("MRBNNWorldToLocal0"),
         make_custom_input("MRBNNWorldToLocal1"),
         make_custom_input("MRBNNWorldToLocal2"),
@@ -193,6 +229,7 @@ def rebuild_volume_material():
         make_custom_input("MRBNNLightDirectionLocal"),
         make_custom_input("MRBNNCloudColor"),
         make_custom_input("MRBNNDirectLightColor"),
+        make_custom_input("MRBNNBakedFeatureTint"),
         make_custom_input("MRBNNRaySteps"),
         make_custom_input("MRBNNOpacity"),
         make_custom_input("MRBNNAmbient"),
@@ -205,12 +242,17 @@ def rebuild_volume_material():
         make_custom_input("MRBNNDirectShadowDensity"),
         make_custom_input("MRBNNPhaseG"),
         make_custom_input("MRBNNPhaseStrength"),
+        make_custom_input("MRBNNUseBakedFeatures"),
+        make_custom_input("MRBNNBakedFeatureContribution"),
+        make_custom_input("MRBNNMultiScatterContribution"),
+        make_custom_input("MRBNNFeatureAlbedoBlend"),
     ])
 
     for source, target in [
         (pixel_ws, "PixelWS"),
         (camera_ws, "CameraWS"),
         (density_tex, "MRBNNDensityTexture"),
+        (feature_tex, "MRBNNFeatureTexture"),
         (w2l0, "MRBNNWorldToLocal0"),
         (w2l1, "MRBNNWorldToLocal1"),
         (w2l2, "MRBNNWorldToLocal2"),
@@ -219,6 +261,7 @@ def rebuild_volume_material():
         (light_dir, "MRBNNLightDirectionLocal"),
         (cloud_color, "MRBNNCloudColor"),
         (direct_light_color, "MRBNNDirectLightColor"),
+        (baked_feature_tint, "MRBNNBakedFeatureTint"),
         (steps, "MRBNNRaySteps"),
         (opacity, "MRBNNOpacity"),
         (ambient, "MRBNNAmbient"),
@@ -231,6 +274,10 @@ def rebuild_volume_material():
         (direct_shadow_density, "MRBNNDirectShadowDensity"),
         (phase_g, "MRBNNPhaseG"),
         (phase_strength, "MRBNNPhaseStrength"),
+        (use_baked_features, "MRBNNUseBakedFeatures"),
+        (baked_feature_contribution, "MRBNNBakedFeatureContribution"),
+        (multi_scatter_contribution, "MRBNNMultiScatterContribution"),
+        (feature_albedo_blend, "MRBNNFeatureAlbedoBlend"),
     ]:
         unreal.MaterialEditingLibrary.connect_material_expressions(source, "", custom, target)
 

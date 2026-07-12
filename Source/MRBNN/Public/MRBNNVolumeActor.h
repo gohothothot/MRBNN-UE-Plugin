@@ -167,6 +167,24 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Direct Light", meta = (ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
 	float RaymarchPhaseStrength = 0.75f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Paper Feature Proxy")
+	bool bUseBakedFeatureLighting = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Paper Feature Proxy", meta = (ClampMin = "0", ClampMax = "3", UIMin = "0", UIMax = "3"))
+	int32 RaymarchBakedFeatureLevel = 2;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Paper Feature Proxy", meta = (ClampMin = "0.0", ClampMax = "2.0", UIMin = "0.0", UIMax = "1.5"))
+	float RaymarchBakedFeatureContribution = 0.65f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Paper Feature Proxy", meta = (ClampMin = "0.0", ClampMax = "2.0", UIMin = "0.0", UIMax = "1.5"))
+	float RaymarchMultiScatterContribution = 0.75f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Paper Feature Proxy", meta = (ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
+	float RaymarchFeatureAlbedoBlend = 0.25f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Paper Feature Proxy")
+	FLinearColor RaymarchBakedFeatureTint = FLinearColor(1.0f, 0.965f, 0.88f, 1.0f);
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Relight")
 	bool bUseDirectionalLightForRelight = true;
 
@@ -241,6 +259,9 @@ protected:
 	TObjectPtr<UVolumeTexture> RaymarchDensityTexture;
 
 	UPROPERTY(Transient)
+	TObjectPtr<UVolumeTexture> RaymarchFeatureTexture;
+
+	UPROPERTY(Transient)
 	TObjectPtr<UTexture> FallbackPreviewTexture;
 
 	FString RaymarchTextureBuildKey;
@@ -248,10 +269,12 @@ protected:
 	FLinearColor CurrentRaymarchDirectLightColor = FLinearColor::White;
 	float CurrentRaymarchDirectLightIntensity = 1.0f;
 	TObjectPtr<UVolumeTexture> LastAppliedRaymarchDensityTexture;
+	TObjectPtr<UVolumeTexture> LastAppliedRaymarchFeatureTexture;
 	FTransform LastAppliedRaymarchTransform;
 	FVector LastAppliedRaymarchLightDirection = FVector::ZeroVector;
 	FLinearColor LastAppliedRaymarchDirectLightColor = FLinearColor::Transparent;
 	FLinearColor LastAppliedRaymarchCloudColor = FLinearColor::Transparent;
+	FLinearColor LastAppliedRaymarchBakedFeatureTint = FLinearColor::Transparent;
 	FVector LastAppliedRaymarchExtent = FVector::ZeroVector;
 	int32 LastAppliedRaymarchStepCount = INDEX_NONE;
 	int32 LastAppliedRaymarchDirectShadowSteps = INDEX_NONE;
@@ -265,6 +288,10 @@ protected:
 	float LastAppliedRaymarchDirectShadowDensity = -1.0f;
 	float LastAppliedRaymarchPhaseG = -2.0f;
 	float LastAppliedRaymarchPhaseStrength = -1.0f;
+	float LastAppliedRaymarchUseBakedFeatures = -1.0f;
+	float LastAppliedRaymarchBakedFeatureContribution = -1.0f;
+	float LastAppliedRaymarchMultiScatterContribution = -1.0f;
+	float LastAppliedRaymarchFeatureAlbedoBlend = -1.0f;
 	bool bEditorPreviewRenderAttempted = false;
 	bool bDensityPreviewBuilt = false;
 	bool bRaymarchTextureBuilt = false;

@@ -6,8 +6,8 @@ This plugin adds the Unreal-side runtime layer for Extra-Creativity/MRBNN baked 
 
 - `UMRBNNBakedVolumeData`: points to an MRBNN working directory, for example `third_party_refs/MRBNN/data/cloud-03`, and validates the required `.bin` files.
 - `UMRBNNVolumeComponent`: calls an optional native bridge and publishes the rendered frame as a transient `UTexture2D` and `UTextureRenderTarget2D` (`PF_FloatRGBA`).
-- `UMRBNNProjectSettings`: exposes default data paths, realtime quality, volume texture baking, raymarch shader quality, and relight controls in Project Settings > Plugins > MRBNN. Paths can use `$(PluginDir)`, `$(ProjectDir)`, or `$(EngineDir)`.
-- `AMRBNNVolumeActor`: a ready-to-drop volume actor. It bakes the bundled MRBNN density field into a transient `UVolumeTexture`, renders it with the plugin raymarch material, and synchronizes the scene directional light into the relight parameters.
+- `UMRBNNProjectSettings`: exposes global data paths, bake destination, optional native bridge preview defaults, and debug logging in Project Settings > Plugins > MRBNN. Paths can use `$(PluginDir)`, `$(ProjectDir)`, or `$(EngineDir)`.
+- `AMRBNNVolumeActor`: a ready-to-drop volume actor. It bakes the bundled MRBNN density field and spatial baked feature files into transient `UVolumeTexture` objects, renders them with the plugin raymarch material, and synchronizes the scene directional light into per-actor relight parameters.
 - `MRBNNBridge`: a small C API wrapper around the original `RenderInterfaceWithTCNN` so Unreal does not compile CUDA code directly. It sets `MRBNN_RELA_PATH_ROOT` before creating the original renderer so relative volume paths in `config.json` resolve from the configured repository root.
 
 The bundled example data lives in:
@@ -84,29 +84,29 @@ When `MRBNNBridge.dll` and `ExternalTCNN.dll` are present under `Binaries/ThirdP
 4. The actor shows the raymarched volume shader immediately in the editor. To exercise the optional native MRBNN bridge output path, select the actor and run `Render Preview Once`; automatic bridge rendering is disabled by default for realtime safety.
 5. To use your own data, create or select a `MRBNNBakedVolumeData` asset in Project Settings, or assign it directly to the actor's `MRBNNVolume` component.
 6. Select an `MRBNNVolumeActor` and run `Bake Current Data To Plugin Data` to package the selected baked files under the plugin's `Data` directory. The copy preserves the MRBNN `config.json` volume path layout.
-7. Use `Apply Realtime Preview Settings` or `Apply Mobile Preview Settings` on the actor/component to reduce output size, sample count, and skybox cost for realtime iteration.
+7. Use `Apply Realtime Preview Settings` or `Apply Mobile Preview Settings` on the actor/component to reduce output size, sample count, raymarch steps, feature level, and shadow cost for realtime iteration.
 
-The default display path is now a realtime volume shader, not a flat card or point proxy. At construction time the actor reads the MRBNN `volume.path` entry from `config.json`, crops the effective density bounds, downsamples it into a transient 3D texture, and assigns that texture to `/MRBNN/Materials/M_MRBNN_VolumeRaymarch`. The material raymarches a cube mesh, uses `SampleLevel` on a `Texture3D`, applies a soft edge fade, and does a realtime direct-light approximation from the level's `DirectionalLight`. The actor forwards light direction, color, and normalized intensity into the material; the shader performs a small shadow march along the light direction and applies a controllable Henyey-Greenstein-style phase response.
+The default display path is now a realtime volume shader, not a flat card or point proxy. At construction time the actor reads the MRBNN `volume.path` entry from `config.json`, crops the effective density bounds, downsamples it into a transient 3D texture, and assigns that texture to `/MRBNN/Materials/M_MRBNN_VolumeRaymarch`. It also reads the paper-side spatial feature grids from `base.bin`, `ms0.bin`, and `ms1.bin`, using the same dense-grid level resolution and half-float packing rules as the original MRBNN `Encoding` loader. Those spatial features are compressed into a second RGBA volume texture: base feature energy, low-order multi-scatter energy, anisotropy proxy, and confidence.
+
+The material raymarches a cube mesh, uses `SampleLevel` on `Texture3D` inputs, applies a soft edge fade, and does a realtime direct-light approximation from the level's `DirectionalLight`. The actor forwards light direction, color, and normalized intensity into the material; the shader performs a small shadow march along the light direction, applies a controllable Henyey-Greenstein-style phase response, and blends the baked feature proxy into ambient multi-scattering, tint, and direct-light shaping.
+
+This is closer to the paper than a density-only cloud because it uses the paper's baked spatial radiance features. It is still an approximation: the full paper path samples `base`, `ms`, `view`, `light`, `hg`, `albedo`, and transmittance features and evaluates the trained MLP/TCNN decoder. The optional native bridge remains the closest implementation of that full neural decoder; the default material path is the game-friendly shader path that can run without CUDA.
 
 To regenerate the bundled material/maps and validate the example map in CI or from PowerShell:
 
 ```powershell
-D:\_Gohot-UE\Engine\Binaries\Win64\UnrealEditor-Cmd.exe D:\_Gohot-UE\Projects\MRBNNExample\MRBNNExample.uproject -run=PythonScript -script=D:/_Gohot-UE/Projects/MRBNNExample/Scripts/SetupMRBNNExample.py -unattended -nop4 -nosplash -NullRHI
+D:\_Gohot-UE\Engine\Binaries\Win64\UnrealEditor-Cmd.exe D:\_Gohot-UE\Projects\MRBNNExample\MRBNNExample.uproject -run=PythonScript -script=D:/_Gohot-UE/Engine/Plugins/Experimental/MRBNN/Scripts/Setup-MRBNNPluginExample.py -unattended -nop4 -nosplash -NullRHI
 D:\_Gohot-UE\Engine\Binaries\Win64\UnrealEditor-Cmd.exe D:\_Gohot-UE\Projects\MRBNNExample\MRBNNExample.uproject -run=PythonScript -script=D:/_Gohot-UE/Projects/MRBNNExample/Scripts/ValidateMRBNNExample.py -unattended -nop4 -nosplash -NullRHI
 ```
 
-Useful Project Settings > Plugins > MRBNN controls:
+Project Settings > Plugins > MRBNN is intentionally global: default data roots, bake destination, native bridge render size/sample defaults, skybox defaults, and verbose debug logging live there.
 
-- `Volume Raymarch Texture Resolution`: 80 by default for realtime desktop; 48 is the mobile preset.
-- `Volume Raymarch Step Count`: 40 by default; mobile preset uses 22.
-- `Volume Raymarch Fit To Density Bounds`: crops sparse source data before downsampling, so cloud data fills the actor bounds instead of becoming a thin slice.
-- `Volume Raymarch Bounds Threshold` and `Volume Raymarch Bounds Padding`: control that crop.
-- `Volume Raymarch Input Threshold`, `Normalize Density`, `Density Power`, and `Opacity`: shape the softness and thickness of the volume.
-- `Volume Ambient Relight`, `Directional Relight`, `Shadow Strength`, `Light Step`, and `Cloud Color`: control the simple relight model.
-- `Volume Raymarch Direct Light Intensity Scale`: scales the scene `DirectionalLight` intensity before it reaches the volume shader.
-- `Volume Raymarch Direct Shadow Steps`: adds 0-8 extra density samples along the light direction. Lower this first for mobile.
-- `Volume Raymarch Direct Shadow Density`: controls how quickly dense cloud regions attenuate direct light.
-- `Volume Raymarch Phase G` and `Volume Raymarch Phase Strength`: control the forward-scattering highlight when looking toward the light.
+Per-actor controls live on `MRBNNVolumeActor`:
+
+- `MRBNN|Volume` and `MRBNN|Volume Shader`: bounds, density crop, texture resolution, ray steps, density shaping, opacity, and fallback debug displays.
+- `MRBNN|Direct Light` and `MRBNN|Relight`: direct light scale, shadow steps, shadow density, HG phase, ambient/direct balance, and scene directional light selection.
+- `MRBNN|Paper Feature Proxy`: baked feature lighting enable, feature level, baked feature contribution, multi-scatter contribution, feature albedo blend, and baked feature tint.
+- `Apply Realtime Preview Settings` and `Apply Mobile Preview Settings`: per-actor presets for desktop or mobile-friendly sampling.
 
 `Auto Initialize` attempts to create the native renderer once on BeginPlay. If the bridge DLL is missing, the component records `Last Error` and will stay quiet on subsequent ticks unless `Retry Failed Auto Initialize` is enabled or `InitializeRenderer` / `RenderOnce` is called manually.
 `Use Player Camera` maps the active player camera into the owner actor's local space and divides by `World Units Per MRBNN Unit`; this lets moving a UE camera around the actor drive MRBNN's original orbit-style camera position.

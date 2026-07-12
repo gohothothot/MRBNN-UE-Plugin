@@ -8,13 +8,14 @@ Unreal Engine runtime plugin for previewing Extra-Creativity MRBNN volumetric da
 - `Content/Examples/MRBNNVolumeExample.umap`: plugin-contained example map.
 - `Content/Materials/M_MRBNN_VolumeRaymarch.uasset`: final raymarched volume material.
 - `Data/cloud-03` and `Data/volumes/cloud_03.bin`: bundled example data.
-- `Project Settings > Plugins > MRBNN`: default paths, bake destination, raymarch quality, relight, realtime/mobile presets.
+- `Project Settings > Plugins > MRBNN`: global data paths, bake destination, native bridge preview defaults, and debug logging.
 - `Scripts/Setup-MRBNNBuildEnv.ps1`: local CUDA/Visual Studio/CMake environment setup.
 - `Scripts/Build-MRBNNBridge.ps1`: optional native CUDA bridge build and smoke test.
+- `Scripts/Setup-MRBNNPluginExample.py`: self-contained editor script that rebuilds the plugin material and example map.
 
-The default visible path does not require the native CUDA bridge. It reads the bundled density volume, builds a transient `UVolumeTexture`, and raymarches it in UE.
+The default visible path does not require the native CUDA bridge. It reads the bundled density volume, builds transient density and baked-feature `UVolumeTexture` objects, and raymarches them in UE.
 
-The realtime shader is an approximation of the MRBNN data, not the full neural decoder from the paper. It uses the baked density field for a game-friendly volume preview, then applies UE-side direct lighting from the scene `DirectionalLight` with color, intensity, phase, and short shadow marching controls.
+The realtime shader is an approximation of the MRBNN paper path, not the full TCNN decoder. It uses the density field plus spatial baked proxy features derived from `base.bin`, `ms0.bin`, and `ms1.bin`; per-actor controls blend those features into ambient multi-scattering, phase response, tint, and direct-light shadowing.
 
 ## Install
 
@@ -36,7 +37,7 @@ Enable `MRBNN Volumetric Renderer`, restart the editor if prompted, and open:
 /MRBNN/Examples/MRBNNVolumeExample
 ```
 
-You can also place an `MRBNNVolumeActor` in any level. With the default project settings it uses plugin-relative data under `Data/`.
+You can also place an `MRBNNVolumeActor` in any level. With the default project settings it uses plugin-relative data under `Data/`. Volume shape, raymarch quality, direct light response, baked-feature strength, and mobile/realtime presets are adjusted per actor.
 
 ## Optional native bridge
 
@@ -71,7 +72,7 @@ Scripts/Build-MRBNNBridge.ps1 -RunSmokeTest
 When the material-generation script changes, run the Python setup script from an Unreal project that has this plugin enabled. In the original development workspace this is:
 
 ```powershell
-D:\_Gohot-UE\Engine\Binaries\Win64\UnrealEditor-Cmd.exe D:\_Gohot-UE\Projects\MRBNNExample\MRBNNExample.uproject -run=PythonScript -script=D:/_Gohot-UE/Projects/MRBNNExample/Scripts/SetupMRBNNExample.py -unattended -nop4 -nosplash -NullRHI
+D:\_Gohot-UE\Engine\Binaries\Win64\UnrealEditor-Cmd.exe D:\_Gohot-UE\Projects\MRBNNExample\MRBNNExample.uproject -run=PythonScript -script=D:/_Gohot-UE/Engine/Plugins/Experimental/MRBNN/Scripts/Setup-MRBNNPluginExample.py -unattended -nop4 -nosplash -NullRHI
 ```
 
 ## More docs

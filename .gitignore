@@ -1,0 +1,23 @@
+# Unreal generated files
+/Binaries/
+/Intermediate/
+/Saved/
+/DerivedDataCache/
+
+# IDE and local machine files
+/.vs/
+/.vscode/
+/.idea/
+*.suo
+*.user
+*.userosscache
+*.sln
+
+# Native bridge build output. Rebuild with Scripts/Build-MRBNNBridge.ps1.
+/Source/ThirdParty/MRBNNBridge/build/
+/Source/ThirdParty/MRBNNBridge/out/
+
+# Logs and temporary render outputs
+*.log
+*.tmp
+*.ppm

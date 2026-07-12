@@ -1,0 +1,89 @@
+{
+	"volume_encoding": {
+		"otype": "Grid",
+		"type": "Dense",
+		"n_levels": 4,
+		"n_features_per_level": 8,
+		"base_resolution": 24,
+		"per_level_scale": 1.5,
+		"interpolation": "Linear"
+	},
+	"ms_encoding": {
+		"otype": "Grid",
+		"type": "Dense",
+		"n_levels": 4,
+		"n_features_per_level": 8,
+		"base_resolution": 12,
+		"per_level_scale": 1.5,
+		"interpolation": "Linear"
+	},
+	"view_encoding": {
+		"otype": "Grid",
+		"type": "Dense",
+		"n_levels": 4,
+		"n_features_per_level": 8,
+		"base_resolution": 8,
+		"per_level_scale": 1.5,
+		"interpolation": "Linear"
+	},
+	"light_encoding": {
+		"otype": "Grid",
+		"type": "Dense",
+		"n_levels": 4,
+		"n_features_per_level": 8,
+		"base_resolution": 8,
+		"per_level_scale": 1.5,
+		"interpolation": "Linear"
+	},
+	"network": {
+		"otype": "FullyFusedMLP",
+		"activation": "ReLU",
+		"output_activation": "ReLU",
+		"n_neurons": 64,
+		"n_hidden_layers": 1
+	},
+	"network_final": {
+		"otype": "FullyFusedMLP",
+		"activation": "ReLU",
+		"output_activation": "None",
+		"n_neurons": 64,
+		"n_hidden_layers": 1
+	},
+	"hg_encoding": {
+		"otype": "Grid",
+		"type": "Dense",
+		"n_levels": 4,
+		"n_features_per_level": 8,
+		"base_resolution": 32,
+		"per_level_scale": 1.5,
+		"interpolation": "Linear"
+	},
+	"albedo_encoding": {
+		"otype": "Grid",
+		"type": "Dense",
+		"n_levels": 4,
+		"n_features_per_level": 8,
+		"base_resolution": 32,
+		"per_level_scale": 1.5,
+		"interpolation": "Linear"
+	},
+	"step_num": 4,
+	"tr_map": {
+		"resolution": [
+			128,
+			128,
+			128
+		],
+		"mipmap_level": 4
+	},
+	"volume": {
+		"path": "data/volumes/cloud_03.bin",
+		"resolution": [
+			257,
+			257,
+			257
+		],
+		"skip_byte_num": 4,
+		"mipmap_level": 8
+	}
+}

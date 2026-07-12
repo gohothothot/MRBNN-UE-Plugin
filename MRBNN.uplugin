@@ -1,0 +1,18 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "0.1.0",
+	"FriendlyName": "MRBNN Volumetric Renderer",
+	"Description": "Runtime integration layer for Multi-feature Radiance Baking Neural Networks volumetric rendering data.",
+	"Category": "Rendering",
+	"CreatedBy": "OpenAI Codex",
+	"CanContainContent": true,
+	"IsBetaVersion": true,
+	"Modules": [
+		{
+			"Name": "MRBNN",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	]
+}

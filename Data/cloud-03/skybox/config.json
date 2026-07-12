@@ -1,0 +1,45 @@
+{
+        "volume_encoding": {
+                "otype": "Grid",
+                "type": "Dense",
+                "n_levels": 4,
+                "n_features_per_level": 8,
+                "base_resolution": 24,
+                "per_level_scale": 1.5,
+                "interpolation": "Linear"
+        },
+        "ms_encoding": {
+                "otype": "Grid",
+                "type": "Dense",
+                "n_levels": 4,
+                "n_features_per_level": 8,
+                "base_resolution": 12,
+                "per_level_scale": 1.5,
+                "interpolation": "Linear"
+        },
+        "network": {
+                "otype": "FullyFusedMLP",
+                "activation": "ReLU",
+                "output_activation": "ReLU",
+                "n_neurons": 64,
+                "n_hidden_layers": 1
+        },
+        "network_final": {
+                "otype": "FullyFusedMLP",
+                "activation": "ReLU",
+                "output_activation": "None",
+                "n_neurons": 64,
+                "n_hidden_layers": 1
+        },
+        "attr_encoding": {
+                "otype": "Grid",
+                "type": "Dense",
+                "n_levels": 4,
+                "n_features_per_level": 8,
+                "base_resolution": 32,
+                "per_level_scale": 1.5,
+                "interpolation": "Linear"
+        },
+        "step_num": 4,
+        "scale": 3.33333333
+}

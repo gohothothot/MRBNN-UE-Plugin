@@ -130,6 +130,21 @@ public:
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Volume")
 	FLinearColor VolumeRaymarchCloudColor = FLinearColor(0.86f, 0.90f, 0.92f, 1.0f);
 
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Volume|Direct Light", meta = (ClampMin = "0.0", UIMin = "0.0", UIMax = "4.0"))
+	float VolumeRaymarchDirectLightIntensityScale = 1.0f;
+
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Volume|Direct Light", meta = (ClampMin = "0", ClampMax = "8", UIMin = "0", UIMax = "6"))
+	int32 VolumeRaymarchDirectShadowSteps = 4;
+
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Volume|Direct Light", meta = (ClampMin = "0.0", UIMin = "0.1", UIMax = "4.0"))
+	float VolumeRaymarchDirectShadowDensity = 1.35f;
+
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Volume|Direct Light", meta = (ClampMin = "-0.85", ClampMax = "0.85", UIMin = "-0.2", UIMax = "0.75"))
+	float VolumeRaymarchPhaseG = 0.35f;
+
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Volume|Direct Light", meta = (ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
+	float VolumeRaymarchPhaseStrength = 0.75f;
+
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Volume", meta = (ClampMin = "8", ClampMax = "96", UIMin = "16", UIMax = "64"))
 	int32 VolumeDensitySampleResolution = 48;
 

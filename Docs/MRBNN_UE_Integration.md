@@ -86,7 +86,7 @@ When `MRBNNBridge.dll` and `ExternalTCNN.dll` are present under `Binaries/ThirdP
 6. Select an `MRBNNVolumeActor` and run `Bake Current Data To Plugin Data` to package the selected baked files under the plugin's `Data` directory. The copy preserves the MRBNN `config.json` volume path layout.
 7. Use `Apply Realtime Preview Settings` or `Apply Mobile Preview Settings` on the actor/component to reduce output size, sample count, and skybox cost for realtime iteration.
 
-The default display path is now a realtime volume shader, not a flat card or point proxy. At construction time the actor reads the MRBNN `volume.path` entry from `config.json`, crops the effective density bounds, downsamples it into a transient 3D texture, and assigns that texture to `/MRBNN/Materials/M_MRBNN_VolumeRaymarch`. The material raymarches a cube mesh, uses `SampleLevel` on a `Texture3D`, applies a soft edge fade, and does a simple directional-light relight from the level's `DirectionalLight`.
+The default display path is now a realtime volume shader, not a flat card or point proxy. At construction time the actor reads the MRBNN `volume.path` entry from `config.json`, crops the effective density bounds, downsamples it into a transient 3D texture, and assigns that texture to `/MRBNN/Materials/M_MRBNN_VolumeRaymarch`. The material raymarches a cube mesh, uses `SampleLevel` on a `Texture3D`, applies a soft edge fade, and does a realtime direct-light approximation from the level's `DirectionalLight`. The actor forwards light direction, color, and normalized intensity into the material; the shader performs a small shadow march along the light direction and applies a controllable Henyey-Greenstein-style phase response.
 
 To regenerate the bundled material/maps and validate the example map in CI or from PowerShell:
 
@@ -103,6 +103,10 @@ Useful Project Settings > Plugins > MRBNN controls:
 - `Volume Raymarch Bounds Threshold` and `Volume Raymarch Bounds Padding`: control that crop.
 - `Volume Raymarch Input Threshold`, `Normalize Density`, `Density Power`, and `Opacity`: shape the softness and thickness of the volume.
 - `Volume Ambient Relight`, `Directional Relight`, `Shadow Strength`, `Light Step`, and `Cloud Color`: control the simple relight model.
+- `Volume Raymarch Direct Light Intensity Scale`: scales the scene `DirectionalLight` intensity before it reaches the volume shader.
+- `Volume Raymarch Direct Shadow Steps`: adds 0-8 extra density samples along the light direction. Lower this first for mobile.
+- `Volume Raymarch Direct Shadow Density`: controls how quickly dense cloud regions attenuate direct light.
+- `Volume Raymarch Phase G` and `Volume Raymarch Phase Strength`: control the forward-scattering highlight when looking toward the light.
 
 `Auto Initialize` attempts to create the native renderer once on BeginPlay. If the bridge DLL is missing, the component records `Last Error` and will stay quiet on subsequent ticks unless `Retry Failed Auto Initialize` is enabled or `InitializeRenderer` / `RenderOnce` is called manually.
 `Use Player Camera` maps the active player camera into the owner actor's local space and divides by `World Units Per MRBNN Unit`; this lets moving a UE camera around the actor drive MRBNN's original orbit-style camera position.

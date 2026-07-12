@@ -152,6 +152,21 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Volume Shader")
 	FLinearColor RaymarchCloudColor = FLinearColor(0.86f, 0.90f, 0.92f, 1.0f);
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Direct Light", meta = (ClampMin = "0.0", UIMin = "0.0", UIMax = "4.0"))
+	float RaymarchDirectLightIntensityScale = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Direct Light", meta = (ClampMin = "0", ClampMax = "8", UIMin = "0", UIMax = "6"))
+	int32 RaymarchDirectShadowSteps = 4;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Direct Light", meta = (ClampMin = "0.0", UIMin = "0.1", UIMax = "4.0"))
+	float RaymarchDirectShadowDensity = 1.35f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Direct Light", meta = (ClampMin = "-0.85", ClampMax = "0.85", UIMin = "-0.2", UIMax = "0.75"))
+	float RaymarchPhaseG = 0.35f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Direct Light", meta = (ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
+	float RaymarchPhaseStrength = 0.75f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Relight")
 	bool bUseDirectionalLightForRelight = true;
 
@@ -230,18 +245,26 @@ protected:
 
 	FString RaymarchTextureBuildKey;
 	double NextPresentationRefreshTimeSeconds = 0.0;
+	FLinearColor CurrentRaymarchDirectLightColor = FLinearColor::White;
+	float CurrentRaymarchDirectLightIntensity = 1.0f;
 	TObjectPtr<UVolumeTexture> LastAppliedRaymarchDensityTexture;
 	FTransform LastAppliedRaymarchTransform;
 	FVector LastAppliedRaymarchLightDirection = FVector::ZeroVector;
+	FLinearColor LastAppliedRaymarchDirectLightColor = FLinearColor::Transparent;
 	FLinearColor LastAppliedRaymarchCloudColor = FLinearColor::Transparent;
 	FVector LastAppliedRaymarchExtent = FVector::ZeroVector;
 	int32 LastAppliedRaymarchStepCount = INDEX_NONE;
+	int32 LastAppliedRaymarchDirectShadowSteps = INDEX_NONE;
 	float LastAppliedRaymarchOpacity = -1.0f;
 	float LastAppliedRaymarchAmbient = -1.0f;
 	float LastAppliedRaymarchDirectional = -1.0f;
 	float LastAppliedRaymarchShadowStrength = -1.0f;
 	float LastAppliedRaymarchLightStep = -1.0f;
 	float LastAppliedRaymarchBrightness = -1.0f;
+	float LastAppliedRaymarchDirectLightIntensity = -1.0f;
+	float LastAppliedRaymarchDirectShadowDensity = -1.0f;
+	float LastAppliedRaymarchPhaseG = -2.0f;
+	float LastAppliedRaymarchPhaseStrength = -1.0f;
 	bool bEditorPreviewRenderAttempted = false;
 	bool bDensityPreviewBuilt = false;
 	bool bRaymarchTextureBuilt = false;

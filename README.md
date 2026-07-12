@@ -14,6 +14,8 @@ Unreal Engine runtime plugin for previewing Extra-Creativity MRBNN volumetric da
 
 The default visible path does not require the native CUDA bridge. It reads the bundled density volume, builds a transient `UVolumeTexture`, and raymarches it in UE.
 
+The realtime shader is an approximation of the MRBNN data, not the full neural decoder from the paper. It uses the baked density field for a game-friendly volume preview, then applies UE-side direct lighting from the scene `DirectionalLight` with color, intensity, phase, and short shadow marching controls.
+
 ## Install
 
 Clone or copy this folder into either:

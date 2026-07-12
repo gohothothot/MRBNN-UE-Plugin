@@ -38,8 +38,12 @@ float stepCount = clamp(MRBNNRaySteps, 4.0, 96.0);
 float dt = (tExit - tEnter) / stepCount;
 float t = tEnter + dt * 0.5;
 float3 lightDir = normalize(MRBNNLightDirectionLocal.xyz + float3(0.0001, 0.0001, 0.0001));
-float viewPhase = pow(saturate(dot(-rayLocal, lightDir) * 0.5 + 0.5), 1.5);
-float phase = 0.55 + 0.45 * viewPhase;
+float cosTheta = clamp(dot(-rayLocal, lightDir), -1.0, 1.0);
+float phaseG = clamp(MRBNNPhaseG, -0.85, 0.85);
+float phaseDenom = max(1.0 + phaseG * phaseG - 2.0 * phaseG * cosTheta, 0.05);
+float hgPhase = (1.0 - phaseG * phaseG) / max(pow(phaseDenom, 1.5), 0.05);
+float phase = lerp(1.0, max(hgPhase * 0.28, 0.05), saturate(MRBNNPhaseStrength));
+int directShadowSteps = (int)clamp(round(MRBNNDirectShadowSteps), 0.0, 8.0);
 float4 accum = float4(0.0, 0.0, 0.0, 0.0);
 
 for (int i = 0; i < 96; ++i)
@@ -55,9 +59,23 @@ for (int i = 0; i < 96; ++i)
     float3 edgeDistance = min(uvw, 1.0 - uvw);
     float edgeT = saturate(min(edgeDistance.x, min(edgeDistance.y, edgeDistance.z)) / 0.035);
     density *= edgeT * edgeT * (3.0 - 2.0 * edgeT);
-    float lightDensity = MRBNNDensityTexture.SampleLevel(MRBNNDensityTextureSampler, saturate(uvw + lightDir * MRBNNLightStep), 0.0).r;
-    float shadow = saturate(1.0 - lightDensity * MRBNNShadowStrength);
-    float lighting = MRBNNAmbient + MRBNNDirectional * shadow * phase;
+    float transmittance = 1.0;
+    for (int lightStepIndex = 0; lightStepIndex < 8; ++lightStepIndex)
+    {
+        if (lightStepIndex >= directShadowSteps)
+        {
+            break;
+        }
+        float lightDensity = MRBNNDensityTexture.SampleLevel(
+            MRBNNDensityTextureSampler,
+            saturate(uvw + lightDir * MRBNNLightStep * (float(lightStepIndex) + 1.0)),
+            0.0).r;
+        transmittance *= exp(-lightDensity * MRBNNDirectShadowDensity);
+    }
+    float legacyShadow = saturate(1.0 - (1.0 - transmittance) * MRBNNShadowStrength);
+    float3 directLight = MRBNNDirectLightColor.rgb * max(MRBNNDirectLightIntensity, 0.0) * MRBNNDirectional * legacyShadow * phase;
+    float3 ambientLight = float3(MRBNNAmbient, MRBNNAmbient, MRBNNAmbient);
+    float3 lighting = ambientLight + directLight;
     float referenceLength = max(MRBNNHalfExtent.x + MRBNNHalfExtent.y + MRBNNHalfExtent.z, 1.0);
     float alpha = saturate(1.0 - exp(-density * MRBNNOpacity * 40.0 * dt / referenceLength));
     float3 color = MRBNNCloudColor.rgb * MRBNNBrightness * lighting * lerp(0.88, 1.14, density);
@@ -144,6 +162,7 @@ def rebuild_volume_material():
     half_extent = create_parameter(material, unreal.MaterialExpressionVectorParameter, "MRBNNHalfExtent", unreal.LinearColor(120.0, 220.0, 160.0, 1.0), -1100, 480)
     light_dir = create_parameter(material, unreal.MaterialExpressionVectorParameter, "MRBNNLightDirectionLocal", unreal.LinearColor(0.35, -0.35, 0.86, 0.0), -1100, 580)
     cloud_color = create_parameter(material, unreal.MaterialExpressionVectorParameter, "MRBNNCloudColor", unreal.LinearColor(0.86, 0.9, 0.92, 1.0), -1100, 680)
+    direct_light_color = create_parameter(material, unreal.MaterialExpressionVectorParameter, "MRBNNDirectLightColor", unreal.LinearColor(1.0, 0.96, 0.88, 1.0), -1100, 780)
 
     steps = create_parameter(material, unreal.MaterialExpressionScalarParameter, "MRBNNRaySteps", 40.0, -660, -220)
     opacity = create_parameter(material, unreal.MaterialExpressionScalarParameter, "MRBNNOpacity", 0.055, -660, -120)
@@ -152,6 +171,11 @@ def rebuild_volume_material():
     shadow = create_parameter(material, unreal.MaterialExpressionScalarParameter, "MRBNNShadowStrength", 0.55, -660, 180)
     light_step = create_parameter(material, unreal.MaterialExpressionScalarParameter, "MRBNNLightStep", 0.075, -660, 280)
     brightness = create_parameter(material, unreal.MaterialExpressionScalarParameter, "MRBNNBrightness", 1.8, -660, 380)
+    direct_light_intensity = create_parameter(material, unreal.MaterialExpressionScalarParameter, "MRBNNDirectLightIntensity", 1.0, -660, 480)
+    direct_shadow_steps = create_parameter(material, unreal.MaterialExpressionScalarParameter, "MRBNNDirectShadowSteps", 4.0, -660, 580)
+    direct_shadow_density = create_parameter(material, unreal.MaterialExpressionScalarParameter, "MRBNNDirectShadowDensity", 1.35, -660, 680)
+    phase_g = create_parameter(material, unreal.MaterialExpressionScalarParameter, "MRBNNPhaseG", 0.35, -660, 780)
+    phase_strength = create_parameter(material, unreal.MaterialExpressionScalarParameter, "MRBNNPhaseStrength", 0.75, -660, 880)
 
     custom = unreal.MaterialEditingLibrary.create_material_expression(material, unreal.MaterialExpressionCustom, -120, 80)
     custom.set_editor_property("description", "MRBNN Volume Raymarch")
@@ -168,6 +192,7 @@ def rebuild_volume_material():
         make_custom_input("MRBNNHalfExtent"),
         make_custom_input("MRBNNLightDirectionLocal"),
         make_custom_input("MRBNNCloudColor"),
+        make_custom_input("MRBNNDirectLightColor"),
         make_custom_input("MRBNNRaySteps"),
         make_custom_input("MRBNNOpacity"),
         make_custom_input("MRBNNAmbient"),
@@ -175,6 +200,11 @@ def rebuild_volume_material():
         make_custom_input("MRBNNShadowStrength"),
         make_custom_input("MRBNNLightStep"),
         make_custom_input("MRBNNBrightness"),
+        make_custom_input("MRBNNDirectLightIntensity"),
+        make_custom_input("MRBNNDirectShadowSteps"),
+        make_custom_input("MRBNNDirectShadowDensity"),
+        make_custom_input("MRBNNPhaseG"),
+        make_custom_input("MRBNNPhaseStrength"),
     ])
 
     for source, target in [
@@ -188,6 +218,7 @@ def rebuild_volume_material():
         (half_extent, "MRBNNHalfExtent"),
         (light_dir, "MRBNNLightDirectionLocal"),
         (cloud_color, "MRBNNCloudColor"),
+        (direct_light_color, "MRBNNDirectLightColor"),
         (steps, "MRBNNRaySteps"),
         (opacity, "MRBNNOpacity"),
         (ambient, "MRBNNAmbient"),
@@ -195,6 +226,11 @@ def rebuild_volume_material():
         (shadow, "MRBNNShadowStrength"),
         (light_step, "MRBNNLightStep"),
         (brightness, "MRBNNBrightness"),
+        (direct_light_intensity, "MRBNNDirectLightIntensity"),
+        (direct_shadow_steps, "MRBNNDirectShadowSteps"),
+        (direct_shadow_density, "MRBNNDirectShadowDensity"),
+        (phase_g, "MRBNNPhaseG"),
+        (phase_strength, "MRBNNPhaseStrength"),
     ]:
         unreal.MaterialEditingLibrary.connect_material_expressions(source, "", custom, target)
 

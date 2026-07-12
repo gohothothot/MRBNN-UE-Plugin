@@ -294,6 +294,11 @@ void AMRBNNVolumeActor::ConfigureFromProjectSettings()
 	RaymarchShadowStrength = Settings->VolumeRaymarchShadowStrength;
 	RaymarchLightStep = Settings->VolumeRaymarchLightStep;
 	RaymarchCloudColor = Settings->VolumeRaymarchCloudColor;
+	RaymarchDirectLightIntensityScale = Settings->VolumeRaymarchDirectLightIntensityScale;
+	RaymarchDirectShadowSteps = Settings->VolumeRaymarchDirectShadowSteps;
+	RaymarchDirectShadowDensity = Settings->VolumeRaymarchDirectShadowDensity;
+	RaymarchPhaseG = Settings->VolumeRaymarchPhaseG;
+	RaymarchPhaseStrength = Settings->VolumeRaymarchPhaseStrength;
 	DensitySampleResolution = Settings->VolumeDensitySampleResolution;
 	MaxDensityVoxelInstances = Settings->VolumeMaxDensityVoxelInstances;
 	DensityThreshold = Settings->VolumeDensityThreshold;
@@ -406,6 +411,11 @@ void AMRBNNVolumeActor::ApplyRealtimePreviewSettings()
 	RaymarchOpacity = 0.055f;
 	RaymarchShadowStrength = 0.55f;
 	RaymarchLightStep = 0.075f;
+	RaymarchDirectLightIntensityScale = 1.0f;
+	RaymarchDirectShadowSteps = 4;
+	RaymarchDirectShadowDensity = 1.35f;
+	RaymarchPhaseG = 0.35f;
+	RaymarchPhaseStrength = 0.75f;
 	DensitySampleResolution = 48;
 	MaxDensityVoxelInstances = 4200;
 	DensityThreshold = 10.0f;
@@ -442,6 +452,11 @@ void AMRBNNVolumeActor::ApplyMobilePreviewSettings()
 	RaymarchOpacity = 0.075f;
 	RaymarchShadowStrength = 0.35f;
 	RaymarchLightStep = 0.08f;
+	RaymarchDirectLightIntensityScale = 0.85f;
+	RaymarchDirectShadowSteps = 2;
+	RaymarchDirectShadowDensity = 1.1f;
+	RaymarchPhaseG = 0.25f;
+	RaymarchPhaseStrength = 0.55f;
 	DensitySampleResolution = 36;
 	MaxDensityVoxelInstances = 2200;
 	DensityThreshold = 20.0f;
@@ -1027,8 +1042,15 @@ bool AMRBNNVolumeActor::BuildDensityVolumePreview()
 
 void AMRBNNVolumeActor::UpdateRelightFromDirectionalLight()
 {
-	if (!MRBNNVolume || !bUseDirectionalLightForRelight)
+	if (!MRBNNVolume)
 	{
+		return;
+	}
+
+	if (!bUseDirectionalLightForRelight)
+	{
+		CurrentRaymarchDirectLightColor = FLinearColor::White;
+		CurrentRaymarchDirectLightIntensity = FMath::Max(RaymarchDirectLightIntensityScale, 0.0f);
 		return;
 	}
 
@@ -1044,6 +1066,8 @@ void AMRBNNVolumeActor::UpdateRelightFromDirectionalLight()
 
 	if (!LightActor)
 	{
+		CurrentRaymarchDirectLightColor = FLinearColor::White;
+		CurrentRaymarchDirectLightIntensity = 0.0f;
 		return;
 	}
 
@@ -1052,14 +1076,22 @@ void AMRBNNVolumeActor::UpdateRelightFromDirectionalLight()
 	MRBNNVolume->RenderSettings.LightDirection = LocalLightDirection;
 
 	FLinearColor LightColor = LightActor->GetLightColor();
+	float DirectLightIntensity = FMath::Max(RaymarchDirectLightIntensityScale, 0.0f);
 	if (const UDirectionalLightComponent* DirectionalComponent = Cast<UDirectionalLightComponent>(LightActor->GetLightComponent()))
 	{
 		LightColor = DirectionalComponent->GetLightColor();
+		DirectLightIntensity = FMath::Clamp(DirectionalComponent->Intensity / 5.0f, 0.0f, 16.0f) * FMath::Max(RaymarchDirectLightIntensityScale, 0.0f);
 	}
+	CurrentRaymarchDirectLightColor = FLinearColor(
+		FMath::Max(LightColor.R, 0.0f),
+		FMath::Max(LightColor.G, 0.0f),
+		FMath::Max(LightColor.B, 0.0f),
+		1.0f);
+	CurrentRaymarchDirectLightIntensity = DirectLightIntensity;
 	MRBNNVolume->RenderSettings.LightColor = FLinearColor(
-		FMath::Max(LightColor.R, 0.05f) * 2.2f,
-		FMath::Max(LightColor.G, 0.05f) * 2.2f,
-		FMath::Max(LightColor.B, 0.05f) * 2.2f,
+		FMath::Max(LightColor.R, 0.05f) * FMath::Max(DirectLightIntensity, 0.05f) * 2.2f,
+		FMath::Max(LightColor.G, 0.05f) * FMath::Max(DirectLightIntensity, 0.05f) * 2.2f,
+		FMath::Max(LightColor.B, 0.05f) * FMath::Max(DirectLightIntensity, 0.05f) * 2.2f,
 		1.0f);
 }
 
@@ -1208,19 +1240,30 @@ void AMRBNNVolumeActor::UpdateRaymarchMaterial()
 	const float SafeShadowStrength = FMath::Max(RaymarchShadowStrength, 0.0f);
 	const float SafeLightStep = FMath::Max(RaymarchLightStep, 0.0f);
 	const float SafeBrightness = FMath::Max(PreviewBrightness, 0.0f);
+	const float SafeDirectLightIntensity = FMath::Max(CurrentRaymarchDirectLightIntensity, 0.0f);
+	const int32 SafeDirectShadowSteps = FMath::Clamp(RaymarchDirectShadowSteps, 0, 8);
+	const float SafeDirectShadowDensity = FMath::Max(RaymarchDirectShadowDensity, 0.0f);
+	const float SafePhaseG = FMath::Clamp(RaymarchPhaseG, -0.85f, 0.85f);
+	const float SafePhaseStrength = FMath::Clamp(RaymarchPhaseStrength, 0.0f, 1.0f);
 	const bool bParametersUnchanged =
 		LastAppliedRaymarchDensityTexture == RaymarchDensityTexture &&
 		LastAppliedRaymarchTransform.Equals(CurrentTransform) &&
 		LastAppliedRaymarchLightDirection.Equals(LightDirection, KINDA_SMALL_NUMBER) &&
+		LastAppliedRaymarchDirectLightColor == CurrentRaymarchDirectLightColor &&
 		LastAppliedRaymarchCloudColor == RaymarchCloudColor &&
 		LastAppliedRaymarchExtent.Equals(SafeExtent, KINDA_SMALL_NUMBER) &&
 		LastAppliedRaymarchStepCount == SafeStepCount &&
+		LastAppliedRaymarchDirectShadowSteps == SafeDirectShadowSteps &&
 		FMath::IsNearlyEqual(LastAppliedRaymarchOpacity, SafeOpacity) &&
 		FMath::IsNearlyEqual(LastAppliedRaymarchAmbient, SafeAmbient) &&
 		FMath::IsNearlyEqual(LastAppliedRaymarchDirectional, SafeDirectional) &&
 		FMath::IsNearlyEqual(LastAppliedRaymarchShadowStrength, SafeShadowStrength) &&
 		FMath::IsNearlyEqual(LastAppliedRaymarchLightStep, SafeLightStep) &&
-		FMath::IsNearlyEqual(LastAppliedRaymarchBrightness, SafeBrightness);
+		FMath::IsNearlyEqual(LastAppliedRaymarchBrightness, SafeBrightness) &&
+		FMath::IsNearlyEqual(LastAppliedRaymarchDirectLightIntensity, SafeDirectLightIntensity) &&
+		FMath::IsNearlyEqual(LastAppliedRaymarchDirectShadowDensity, SafeDirectShadowDensity) &&
+		FMath::IsNearlyEqual(LastAppliedRaymarchPhaseG, SafePhaseG) &&
+		FMath::IsNearlyEqual(LastAppliedRaymarchPhaseStrength, SafePhaseStrength);
 	if (bParametersUnchanged)
 	{
 		return;
@@ -1235,6 +1278,7 @@ void AMRBNNVolumeActor::UpdateRaymarchMaterial()
 	RaymarchMaterialInstance->SetVectorParameterValue(TEXT("MRBNNHalfExtent"), FLinearColor(SafeExtent.X, SafeExtent.Y, SafeExtent.Z, 1.0f));
 	RaymarchMaterialInstance->SetVectorParameterValue(TEXT("MRBNNLightDirectionLocal"), FLinearColor(LightDirection.X, LightDirection.Y, LightDirection.Z, 0.0f));
 	RaymarchMaterialInstance->SetVectorParameterValue(TEXT("MRBNNCloudColor"), RaymarchCloudColor);
+	RaymarchMaterialInstance->SetVectorParameterValue(TEXT("MRBNNDirectLightColor"), CurrentRaymarchDirectLightColor);
 
 	RaymarchMaterialInstance->SetScalarParameterValue(TEXT("MRBNNRaySteps"), static_cast<float>(SafeStepCount));
 	RaymarchMaterialInstance->SetScalarParameterValue(TEXT("MRBNNOpacity"), SafeOpacity);
@@ -1243,19 +1287,30 @@ void AMRBNNVolumeActor::UpdateRaymarchMaterial()
 	RaymarchMaterialInstance->SetScalarParameterValue(TEXT("MRBNNShadowStrength"), SafeShadowStrength);
 	RaymarchMaterialInstance->SetScalarParameterValue(TEXT("MRBNNLightStep"), SafeLightStep);
 	RaymarchMaterialInstance->SetScalarParameterValue(TEXT("MRBNNBrightness"), SafeBrightness);
+	RaymarchMaterialInstance->SetScalarParameterValue(TEXT("MRBNNDirectLightIntensity"), SafeDirectLightIntensity);
+	RaymarchMaterialInstance->SetScalarParameterValue(TEXT("MRBNNDirectShadowSteps"), static_cast<float>(SafeDirectShadowSteps));
+	RaymarchMaterialInstance->SetScalarParameterValue(TEXT("MRBNNDirectShadowDensity"), SafeDirectShadowDensity);
+	RaymarchMaterialInstance->SetScalarParameterValue(TEXT("MRBNNPhaseG"), SafePhaseG);
+	RaymarchMaterialInstance->SetScalarParameterValue(TEXT("MRBNNPhaseStrength"), SafePhaseStrength);
 
 	LastAppliedRaymarchDensityTexture = RaymarchDensityTexture;
 	LastAppliedRaymarchTransform = CurrentTransform;
 	LastAppliedRaymarchLightDirection = LightDirection;
+	LastAppliedRaymarchDirectLightColor = CurrentRaymarchDirectLightColor;
 	LastAppliedRaymarchCloudColor = RaymarchCloudColor;
 	LastAppliedRaymarchExtent = SafeExtent;
 	LastAppliedRaymarchStepCount = SafeStepCount;
+	LastAppliedRaymarchDirectShadowSteps = SafeDirectShadowSteps;
 	LastAppliedRaymarchOpacity = SafeOpacity;
 	LastAppliedRaymarchAmbient = SafeAmbient;
 	LastAppliedRaymarchDirectional = SafeDirectional;
 	LastAppliedRaymarchShadowStrength = SafeShadowStrength;
 	LastAppliedRaymarchLightStep = SafeLightStep;
 	LastAppliedRaymarchBrightness = SafeBrightness;
+	LastAppliedRaymarchDirectLightIntensity = SafeDirectLightIntensity;
+	LastAppliedRaymarchDirectShadowDensity = SafeDirectShadowDensity;
+	LastAppliedRaymarchPhaseG = SafePhaseG;
+	LastAppliedRaymarchPhaseStrength = SafePhaseStrength;
 }
 
 void AMRBNNVolumeActor::UpdateDebugText()

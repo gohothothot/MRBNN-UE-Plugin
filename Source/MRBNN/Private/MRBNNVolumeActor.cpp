@@ -319,14 +319,6 @@ AMRBNNVolumeActor::AMRBNNVolumeActor()
 	VolumeBounds->SetCollisionProfileName(UCollisionProfile::NoCollision_ProfileName);
 	VolumeBounds->SetLineThickness(2.0f);
 
-	VolumeRaymarchMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("VolumeRaymarchMesh"));
-	VolumeRaymarchMesh->SetupAttachment(SceneRoot);
-	VolumeRaymarchMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	VolumeRaymarchMesh->SetCollisionProfileName(UCollisionProfile::NoCollision_ProfileName);
-	VolumeRaymarchMesh->SetCastShadow(false);
-	VolumeRaymarchMesh->bReceivesDecals = false;
-	VolumeRaymarchMesh->TranslucencySortPriority = 9;
-
 	VolumeSlices = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("VolumeSlices"));
 	VolumeSlices->SetupAttachment(SceneRoot);
 	VolumeSlices->SetCollisionEnabled(ECollisionEnabled::NoCollision);
@@ -361,7 +353,6 @@ AMRBNNVolumeActor::AMRBNNVolumeActor()
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> CubeMeshFinder(TEXT("/Engine/BasicShapes/Cube.Cube"));
 	if (CubeMeshFinder.Succeeded())
 	{
-		VolumeRaymarchMesh->SetStaticMesh(CubeMeshFinder.Object);
 		VolumeDensityVoxels->SetStaticMesh(CubeMeshFinder.Object);
 	}
 
@@ -755,14 +746,6 @@ void AMRBNNVolumeActor::UpdateVolumeProxy()
 		VolumeBounds->SetBoxExtent(SafeExtent);
 	}
 
-	if (VolumeRaymarchMesh)
-	{
-		VolumeRaymarchMesh->SetRelativeLocation(FVector::ZeroVector);
-		VolumeRaymarchMesh->SetRelativeRotation(FRotator::ZeroRotator);
-		VolumeRaymarchMesh->SetRelativeScale3D(SafeExtent * 2.0f / 100.0f);
-		VolumeRaymarchMesh->SetVisibility(bUseRaymarchShader, true);
-	}
-
 	if (VolumeBillboard)
 	{
 		VolumeBillboard->SetRelativeLocation(FVector::ZeroVector);
@@ -886,10 +869,6 @@ bool AMRBNNVolumeActor::BuildRaymarchVolumeTexture()
 		RaymarchDensityTexture = nullptr;
 		RaymarchFeatureTexture = nullptr;
 		RaymarchTextureBuildKey.Empty();
-		if (VolumeRaymarchMesh)
-		{
-			VolumeRaymarchMesh->SetVisibility(false, true);
-		}
 		return false;
 	}
 
@@ -903,10 +882,6 @@ bool AMRBNNVolumeActor::BuildRaymarchVolumeTexture()
 		RaymarchDensityTexture = nullptr;
 		RaymarchFeatureTexture = nullptr;
 		RaymarchTextureBuildKey.Empty();
-		if (VolumeRaymarchMesh)
-		{
-			VolumeRaymarchMesh->SetVisibility(false, true);
-		}
 		return false;
 	}
 
@@ -995,10 +970,6 @@ bool AMRBNNVolumeActor::BuildRaymarchVolumeTexture()
 	BuildKey += FeatureSourceKey;
 	if (RaymarchDensityTexture && RaymarchTextureBuildKey == BuildKey)
 	{
-		if (VolumeRaymarchMesh)
-		{
-			VolumeRaymarchMesh->SetVisibility(bUseRaymarchShader, true);
-		}
 		UpdateRaymarchMaterial();
 		return true;
 	}
@@ -1010,10 +981,6 @@ bool AMRBNNVolumeActor::BuildRaymarchVolumeTexture()
 		RaymarchDensityTexture = nullptr;
 		RaymarchFeatureTexture = nullptr;
 		RaymarchTextureBuildKey.Empty();
-		if (VolumeRaymarchMesh)
-		{
-			VolumeRaymarchMesh->SetVisibility(false, true);
-		}
 		return false;
 	}
 
@@ -1024,10 +991,6 @@ bool AMRBNNVolumeActor::BuildRaymarchVolumeTexture()
 		RaymarchDensityTexture = nullptr;
 		RaymarchFeatureTexture = nullptr;
 		RaymarchTextureBuildKey.Empty();
-		if (VolumeRaymarchMesh)
-		{
-			VolumeRaymarchMesh->SetVisibility(false, true);
-		}
 		return false;
 	}
 
@@ -1267,10 +1230,6 @@ bool AMRBNNVolumeActor::BuildRaymarchVolumeTexture()
 	RaymarchDensityTexture = NewTexture;
 	RaymarchFeatureTexture = NewFeatureTexture;
 	RaymarchTextureBuildKey = BuildKey;
-	if (VolumeRaymarchMesh)
-	{
-		VolumeRaymarchMesh->SetVisibility(bUseRaymarchShader, true);
-	}
 	UpdateRaymarchMaterial();
 	return true;
 }
@@ -1307,14 +1266,6 @@ bool AMRBNNVolumeActor::RenderComputeGlobalShaderPreview()
 	}
 
 	const bool bRendered = MRBNNVolume->RenderComputeVolumeOnce(RaymarchDensityTexture, RaymarchFeatureTexture, MakeComputeVolumeSettings());
-	if (VolumeRaymarchMesh)
-	{
-		VolumeRaymarchMesh->SetVisibility(bUseRaymarchShader && RaymarchMaterialInstance && RaymarchDensityTexture, true);
-	}
-	if (bRendered && !bShowVolumeBillboard)
-	{
-		bShowVolumeBillboard = true;
-	}
 	return bRendered;
 }
 
@@ -1635,19 +1586,9 @@ void AMRBNNVolumeActor::UpdateRelightFromDirectionalLight()
 
 void AMRBNNVolumeActor::UpdateVolumeMaterial()
 {
-	if (!VolumeSlices || !VolumeBillboard || !VolumeRaymarchMesh)
+	if (!VolumeSlices || !VolumeBillboard)
 	{
 		return;
-	}
-
-	if (!RaymarchMaterialInstance)
-	{
-		UMaterialInterface* RaymarchBaseMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/MRBNN/Materials/M_MRBNN_VolumeRaymarch.M_MRBNN_VolumeRaymarch"));
-		if (RaymarchBaseMaterial)
-		{
-			RaymarchMaterialInstance = UMaterialInstanceDynamic::Create(RaymarchBaseMaterial, this);
-			VolumeRaymarchMesh->SetMaterial(0, RaymarchMaterialInstance);
-		}
 	}
 
 	UMaterialInterface* BaseMaterial = nullptr;
@@ -1678,7 +1619,7 @@ void AMRBNNVolumeActor::UpdateVolumeMaterial()
 		VolumeDensityVoxels->SetMaterial(0, DensityVoxelMaterialInstance);
 	}
 
-	if (!BillboardMaterialInstance && !VolumeMaterialInstance && !DensityVoxelMaterialInstance && !RaymarchMaterialInstance)
+	if (!BillboardMaterialInstance && !VolumeMaterialInstance && !DensityVoxelMaterialInstance)
 	{
 		return;
 	}
@@ -1695,7 +1636,6 @@ void AMRBNNVolumeActor::UpdateVolumeMaterial()
 	{
 		VolumeDensityVoxels->SetVisibility(bShowDensityVolume && VolumeDensityVoxels->GetInstanceCount() > 0, true);
 	}
-	VolumeRaymarchMesh->SetVisibility(bUseRaymarchShader && RaymarchMaterialInstance && RaymarchDensityTexture, true);
 	if (!bCanShowPreview && !DensityVoxelMaterialInstance)
 	{
 		UpdateRaymarchMaterial();
@@ -1747,130 +1687,8 @@ void AMRBNNVolumeActor::UpdateVolumeMaterial()
 
 void AMRBNNVolumeActor::UpdateRaymarchMaterial()
 {
-	if (!RaymarchMaterialInstance || !VolumeRaymarchMesh)
-	{
-		return;
-	}
-
-	const bool bCanShowRaymarch = bUseRaymarchShader && RaymarchDensityTexture;
-	VolumeRaymarchMesh->SetVisibility(bCanShowRaymarch, true);
-	if (!bCanShowRaymarch)
-	{
-		return;
-	}
-
-	const FMatrix WorldToLocal = GetActorTransform().ToInverseMatrixWithScale();
-	const FVector SafeExtent(
-		FMath::Max(VolumeExtent.X, 1.0f),
-		FMath::Max(VolumeExtent.Y, 1.0f),
-		FMath::Max(VolumeExtent.Z, 1.0f));
-	FVector LightDirection = FVector(0.35f, -0.35f, 0.86f).GetSafeNormal();
-	if (MRBNNVolume)
-	{
-		LightDirection = MRBNNVolume->RenderSettings.LightDirection.GetSafeNormal(UE_SMALL_NUMBER, LightDirection);
-	}
-
-	const FTransform CurrentTransform = GetActorTransform();
-	const int32 SafeStepCount = FMath::Clamp(RaymarchStepCount, 4, 96);
-	const float SafeOpacity = FMath::Max(RaymarchOpacity, 0.0f);
-	const float SafeAmbient = FMath::Max(AmbientRelight, 0.0f);
-	const float SafeDirectional = FMath::Max(DirectionalRelight, 0.0f);
-	const float SafeShadowStrength = FMath::Max(RaymarchShadowStrength, 0.0f);
-	const float SafeLightStep = FMath::Max(RaymarchLightStep, 0.0f);
-	const float SafeBrightness = FMath::Max(PreviewBrightness, 0.0f);
-	const float SafeDirectLightIntensity = FMath::Max(CurrentRaymarchDirectLightIntensity, 0.0f);
-	const int32 SafeDirectShadowSteps = FMath::Clamp(RaymarchDirectShadowSteps, 0, 8);
-	const float SafeDirectShadowDensity = FMath::Max(RaymarchDirectShadowDensity, 0.0f);
-	const float SafePhaseG = FMath::Clamp(RaymarchPhaseG, -0.85f, 0.85f);
-	const float SafePhaseStrength = FMath::Clamp(RaymarchPhaseStrength, 0.0f, 1.0f);
-	const float SafeUseBakedFeatures = (bUseBakedFeatureLighting && RaymarchFeatureTexture) ? 1.0f : 0.0f;
-	const float SafeBakedFeatureContribution = FMath::Clamp(RaymarchBakedFeatureContribution, 0.0f, 2.0f);
-	const float SafeMultiScatterContribution = FMath::Clamp(RaymarchMultiScatterContribution, 0.0f, 2.0f);
-	const float SafeFeatureAlbedoBlend = FMath::Clamp(RaymarchFeatureAlbedoBlend, 0.0f, 1.0f);
-	const bool bParametersUnchanged =
-		LastAppliedRaymarchDensityTexture == RaymarchDensityTexture &&
-		LastAppliedRaymarchFeatureTexture == RaymarchFeatureTexture &&
-		LastAppliedRaymarchTransform.Equals(CurrentTransform) &&
-		LastAppliedRaymarchLightDirection.Equals(LightDirection, KINDA_SMALL_NUMBER) &&
-		LastAppliedRaymarchDirectLightColor == CurrentRaymarchDirectLightColor &&
-		LastAppliedRaymarchCloudColor == RaymarchCloudColor &&
-		LastAppliedRaymarchBakedFeatureTint == RaymarchBakedFeatureTint &&
-		LastAppliedRaymarchExtent.Equals(SafeExtent, KINDA_SMALL_NUMBER) &&
-		LastAppliedRaymarchStepCount == SafeStepCount &&
-		LastAppliedRaymarchDirectShadowSteps == SafeDirectShadowSteps &&
-		FMath::IsNearlyEqual(LastAppliedRaymarchOpacity, SafeOpacity) &&
-		FMath::IsNearlyEqual(LastAppliedRaymarchAmbient, SafeAmbient) &&
-		FMath::IsNearlyEqual(LastAppliedRaymarchDirectional, SafeDirectional) &&
-		FMath::IsNearlyEqual(LastAppliedRaymarchShadowStrength, SafeShadowStrength) &&
-		FMath::IsNearlyEqual(LastAppliedRaymarchLightStep, SafeLightStep) &&
-		FMath::IsNearlyEqual(LastAppliedRaymarchBrightness, SafeBrightness) &&
-		FMath::IsNearlyEqual(LastAppliedRaymarchDirectLightIntensity, SafeDirectLightIntensity) &&
-		FMath::IsNearlyEqual(LastAppliedRaymarchDirectShadowDensity, SafeDirectShadowDensity) &&
-		FMath::IsNearlyEqual(LastAppliedRaymarchPhaseG, SafePhaseG) &&
-		FMath::IsNearlyEqual(LastAppliedRaymarchPhaseStrength, SafePhaseStrength) &&
-		FMath::IsNearlyEqual(LastAppliedRaymarchUseBakedFeatures, SafeUseBakedFeatures) &&
-		FMath::IsNearlyEqual(LastAppliedRaymarchBakedFeatureContribution, SafeBakedFeatureContribution) &&
-		FMath::IsNearlyEqual(LastAppliedRaymarchMultiScatterContribution, SafeMultiScatterContribution) &&
-		FMath::IsNearlyEqual(LastAppliedRaymarchFeatureAlbedoBlend, SafeFeatureAlbedoBlend);
-	if (bParametersUnchanged)
-	{
-		return;
-	}
-
-	RaymarchMaterialInstance->SetTextureParameterValue(TEXT("MRBNNDensityTexture"), RaymarchDensityTexture);
-	RaymarchMaterialInstance->SetTextureParameterValue(TEXT("MRBNNFeatureTexture"), RaymarchFeatureTexture ? RaymarchFeatureTexture : RaymarchDensityTexture);
-	RaymarchMaterialInstance->SetVectorParameterValue(TEXT("MRBNNWorldToLocal0"), FLinearColor(WorldToLocal.M[0][0], WorldToLocal.M[1][0], WorldToLocal.M[2][0], 0.0f));
-	RaymarchMaterialInstance->SetVectorParameterValue(TEXT("MRBNNWorldToLocal1"), FLinearColor(WorldToLocal.M[0][1], WorldToLocal.M[1][1], WorldToLocal.M[2][1], 0.0f));
-	RaymarchMaterialInstance->SetVectorParameterValue(TEXT("MRBNNWorldToLocal2"), FLinearColor(WorldToLocal.M[0][2], WorldToLocal.M[1][2], WorldToLocal.M[2][2], 0.0f));
-	const FVector ActorLocation = CurrentTransform.GetLocation();
-	RaymarchMaterialInstance->SetVectorParameterValue(TEXT("MRBNNActorWorldPosition"), FLinearColor(ActorLocation.X, ActorLocation.Y, ActorLocation.Z, 0.0f));
-	RaymarchMaterialInstance->SetVectorParameterValue(TEXT("MRBNNHalfExtent"), FLinearColor(SafeExtent.X, SafeExtent.Y, SafeExtent.Z, 1.0f));
-	RaymarchMaterialInstance->SetVectorParameterValue(TEXT("MRBNNLightDirectionLocal"), FLinearColor(LightDirection.X, LightDirection.Y, LightDirection.Z, 0.0f));
-	RaymarchMaterialInstance->SetVectorParameterValue(TEXT("MRBNNCloudColor"), RaymarchCloudColor);
-	RaymarchMaterialInstance->SetVectorParameterValue(TEXT("MRBNNDirectLightColor"), CurrentRaymarchDirectLightColor);
-	RaymarchMaterialInstance->SetVectorParameterValue(TEXT("MRBNNBakedFeatureTint"), RaymarchBakedFeatureTint);
-
-	RaymarchMaterialInstance->SetScalarParameterValue(TEXT("MRBNNRaySteps"), static_cast<float>(SafeStepCount));
-	RaymarchMaterialInstance->SetScalarParameterValue(TEXT("MRBNNOpacity"), SafeOpacity);
-	RaymarchMaterialInstance->SetScalarParameterValue(TEXT("MRBNNAmbient"), SafeAmbient);
-	RaymarchMaterialInstance->SetScalarParameterValue(TEXT("MRBNNDirectional"), SafeDirectional);
-	RaymarchMaterialInstance->SetScalarParameterValue(TEXT("MRBNNShadowStrength"), SafeShadowStrength);
-	RaymarchMaterialInstance->SetScalarParameterValue(TEXT("MRBNNLightStep"), SafeLightStep);
-	RaymarchMaterialInstance->SetScalarParameterValue(TEXT("MRBNNBrightness"), SafeBrightness);
-	RaymarchMaterialInstance->SetScalarParameterValue(TEXT("MRBNNDirectLightIntensity"), SafeDirectLightIntensity);
-	RaymarchMaterialInstance->SetScalarParameterValue(TEXT("MRBNNDirectShadowSteps"), static_cast<float>(SafeDirectShadowSteps));
-	RaymarchMaterialInstance->SetScalarParameterValue(TEXT("MRBNNDirectShadowDensity"), SafeDirectShadowDensity);
-	RaymarchMaterialInstance->SetScalarParameterValue(TEXT("MRBNNPhaseG"), SafePhaseG);
-	RaymarchMaterialInstance->SetScalarParameterValue(TEXT("MRBNNPhaseStrength"), SafePhaseStrength);
-	RaymarchMaterialInstance->SetScalarParameterValue(TEXT("MRBNNUseBakedFeatures"), SafeUseBakedFeatures);
-	RaymarchMaterialInstance->SetScalarParameterValue(TEXT("MRBNNBakedFeatureContribution"), SafeBakedFeatureContribution);
-	RaymarchMaterialInstance->SetScalarParameterValue(TEXT("MRBNNMultiScatterContribution"), SafeMultiScatterContribution);
-	RaymarchMaterialInstance->SetScalarParameterValue(TEXT("MRBNNFeatureAlbedoBlend"), SafeFeatureAlbedoBlend);
-
-	LastAppliedRaymarchDensityTexture = RaymarchDensityTexture;
-	LastAppliedRaymarchFeatureTexture = RaymarchFeatureTexture;
-	LastAppliedRaymarchTransform = CurrentTransform;
-	LastAppliedRaymarchLightDirection = LightDirection;
-	LastAppliedRaymarchDirectLightColor = CurrentRaymarchDirectLightColor;
-	LastAppliedRaymarchCloudColor = RaymarchCloudColor;
-	LastAppliedRaymarchBakedFeatureTint = RaymarchBakedFeatureTint;
-	LastAppliedRaymarchExtent = SafeExtent;
-	LastAppliedRaymarchStepCount = SafeStepCount;
-	LastAppliedRaymarchDirectShadowSteps = SafeDirectShadowSteps;
-	LastAppliedRaymarchOpacity = SafeOpacity;
-	LastAppliedRaymarchAmbient = SafeAmbient;
-	LastAppliedRaymarchDirectional = SafeDirectional;
-	LastAppliedRaymarchShadowStrength = SafeShadowStrength;
-	LastAppliedRaymarchLightStep = SafeLightStep;
-	LastAppliedRaymarchBrightness = SafeBrightness;
-	LastAppliedRaymarchDirectLightIntensity = SafeDirectLightIntensity;
-	LastAppliedRaymarchDirectShadowDensity = SafeDirectShadowDensity;
-	LastAppliedRaymarchPhaseG = SafePhaseG;
-	LastAppliedRaymarchPhaseStrength = SafePhaseStrength;
-	LastAppliedRaymarchUseBakedFeatures = SafeUseBakedFeatures;
-	LastAppliedRaymarchBakedFeatureContribution = SafeBakedFeatureContribution;
-	LastAppliedRaymarchMultiScatterContribution = SafeMultiScatterContribution;
-	LastAppliedRaymarchFeatureAlbedoBlend = SafeFeatureAlbedoBlend;
+	// The final preview path is the RDG GlobalShader pass. This hook remains as
+	// a compatibility no-op for older maps that still call the old rebuild action.
 }
 
 void AMRBNNVolumeActor::UpdateDebugText()

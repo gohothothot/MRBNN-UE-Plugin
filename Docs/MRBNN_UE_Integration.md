@@ -90,18 +90,18 @@ When `MRBNNBridge.dll` and `ExternalTCNN.dll` are present under `Binaries/ThirdP
 1. Enable the `MRBNN Volumetric Renderer` plugin.
 2. Open Project Settings > Plugins > MRBNN. The defaults point at `$(PluginDir)/Data/cloud-03`, so the bundled example works without absolute paths.
 3. Open `/MRBNN/Examples/MRBNNVolumeExample`, or drop an `MRBNNVolumeActor` into any level.
-4. The actor shows the UE-native compute volume in the editor through a SceneViewExtension post-process pass. The fallback raymarch material is disabled by default and is kept only for debugging/comparison.
+4. The actor shows the UE-native compute volume in the editor through a SceneViewExtension post-process pass. No material raymarch actor path is created by default.
 5. To use your own data, create or select a `MRBNNBakedVolumeData` asset in Project Settings, or assign it directly to the actor's `MRBNNVolume` component.
 6. Select an `MRBNNVolumeActor` and run `Bake Current Data To Plugin Data` to package the selected baked files under the plugin's `Data` directory. The copy preserves the MRBNN `config.json` volume path layout.
 7. Use `Apply Realtime Preview Settings` or `Apply Mobile Preview Settings` on the actor/component to reduce output size, sample count, compute steps, feature level, and shadow cost for realtime iteration.
 
 The default display path is now a UE GlobalShader compute renderer, not a flat card, point proxy, or material-only raymarch. At construction time the actor reads the MRBNN `volume.path` entry from `config.json`, crops the effective density bounds, downsamples it into a transient 3D texture, and prepares it for the RDG compute pass. It also reads the paper-side spatial feature grids from `base.bin`, `ms0.bin`, and `ms1.bin`, using the same dense-grid level resolution and half-float packing rules as the original MRBNN `Encoding` loader. Those spatial features are compressed into a second RGBA volume texture: base feature energy, low-order multi-scatter energy, anisotropy proxy, and confidence.
 
-`FMRBNNSceneViewExtension` subscribes to the Tonemap post-process pass, asks the actor for a per-view camera/render description, dispatches `MainCS` into an RDG cloud texture, then dispatches `MainCompositeCS` to blend that cloud over the current SceneColor. The shader performs bounded volume marching in the plugin-built 3D textures, a small shadow march along the scene directional light, a controllable Henyey-Greenstein-style phase response, and baked-feature proxy lighting. The older cube-mesh material raymarch remains available behind `Use Raymarch Shader` for fallback/debug, but it is not the default demo path.
+`FMRBNNSceneViewExtension` subscribes to the Tonemap post-process pass, asks the actor for a per-view camera/render description, dispatches `MainCS` into an RDG cloud texture, then dispatches `MainCompositeCS` to blend that cloud over the current SceneColor. The single plugin shader file performs bounded volume traversal in the plugin-built 3D textures, a small shadow traversal along the scene directional light, a controllable Henyey-Greenstein-style phase response, baked-feature proxy lighting, and the final scene composite. The old cube-mesh material raymarch path has been removed from the runtime actor.
 
 This is closer to the paper than a density-only cloud because it uses the paper's baked spatial radiance features and now runs through UE's render graph instead of a material preview. It is still an approximation: the full paper path samples `base`, `ms`, `view`, `light`, `hg`, `albedo`, and transmittance features and evaluates the trained MLP/TCNN decoder. The optional native bridge remains the closest implementation of that full neural decoder and now emits raw float buffers for parity checks; the default compute path is the game-friendly UE shader path that can run without CUDA.
 
-To regenerate the bundled material/maps and validate the example map in CI or from PowerShell:
+To regenerate the bundled example map and validate it in CI or from PowerShell:
 
 ```powershell
 D:\_Gohot-UE\Engine\Binaries\Win64\UnrealEditor-Cmd.exe D:\_Gohot-UE\Projects\MRBNNExample\MRBNNExample.uproject -run=PythonScript -script=D:/_Gohot-UE/Engine/Plugins/Experimental/MRBNN/Scripts/Setup-MRBNNPluginExample.py -unattended -nop4 -nosplash -NullRHI
@@ -112,7 +112,7 @@ Project Settings > Plugins > MRBNN is intentionally global: default data roots, 
 
 Per-actor controls live on `MRBNNVolumeActor`:
 
-- `MRBNN|Volume` and `MRBNN|Volume Shader`: bounds, density crop, texture resolution, compute steps, density shaping, opacity, and fallback debug displays.
+- `MRBNN|Volume` and `MRBNN|Compute Volume`: bounds, density crop, texture resolution, compute steps, density shaping, opacity, and debug displays.
 - `MRBNN|Direct Light` and `MRBNN|Relight`: direct light scale, shadow steps, shadow density, HG phase, ambient/direct balance, and scene directional light selection.
 - `MRBNN|Paper Feature Proxy`: baked feature lighting enable, feature level, baked feature contribution, multi-scatter contribution, feature albedo blend, and baked feature tint.
 - `Apply Realtime Preview Settings` and `Apply Mobile Preview Settings`: per-actor presets for desktop or mobile-friendly sampling.

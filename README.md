@@ -8,12 +8,11 @@ Unreal Engine runtime plugin for previewing Extra-Creativity MRBNN volumetric da
 - `Content/Examples/MRBNNVolumeExample.umap`: plugin-contained example map.
 - `Shaders/Private/MRBNNComputeRender.usf`: compute volume renderer plus SceneColor composite shader.
 - `MRBNNComputeRenderer` and `MRBNNSceneViewExtension`: RDG GlobalShader dispatch and post-process integration.
-- `Content/Materials/M_MRBNN_VolumeRaymarch.uasset`: fallback/debug material, kept for comparison and editor fallback only.
 - `Data/cloud-03` and `Data/volumes/cloud_03.bin`: bundled example data.
 - `Project Settings > Plugins > MRBNN`: global data paths, bake destination, native bridge preview defaults, and debug logging.
 - `Scripts/Setup-MRBNNBuildEnv.ps1`: local CUDA/Visual Studio/CMake environment setup.
 - `Scripts/Build-MRBNNBridge.ps1`: optional native CUDA bridge build and smoke test.
-- `Scripts/Setup-MRBNNPluginExample.py`: self-contained editor script that rebuilds the plugin material and example map.
+- `Scripts/Setup-MRBNNPluginExample.py`: self-contained editor script that prepares the compute-render example map.
 
 The default visible path does not require the native CUDA bridge. It reads the bundled density volume, builds transient density and baked-feature `UVolumeTexture` objects, dispatches a UE GlobalShader compute pass, and composites the result into the scene through `FSceneViewExtensionBase` after tonemapping.
 
@@ -81,9 +80,9 @@ The smoke test writes a preview image plus raw float RGBA buffers next to the de
 
 For the closest available UE-native preview inside Unreal, place or select an `MRBNNVolumeActor` and run `Apply Paper Preview Settings`. The actor uses the SceneViewExtension compute composite path by default. Use the CUDA/TCNN bridge smoke outputs as numeric and visual references while migrating the remaining neural decoder pieces into UE shaders.
 
-## Rebuild plugin assets
+## Rebuild Example Map
 
-When the material-generation script changes, run the Python setup script from an Unreal project that has this plugin enabled. In the original development workspace this is:
+Run the Python setup script from an Unreal project that has this plugin enabled to recreate the plugin example map:
 
 ```powershell
 D:\_Gohot-UE\Engine\Binaries\Win64\UnrealEditor-Cmd.exe D:\_Gohot-UE\Projects\MRBNNExample\MRBNNExample.uproject -run=PythonScript -script=D:/_Gohot-UE/Engine/Plugins/Experimental/MRBNN/Scripts/Setup-MRBNNPluginExample.py -unattended -nop4 -nosplash -NullRHI

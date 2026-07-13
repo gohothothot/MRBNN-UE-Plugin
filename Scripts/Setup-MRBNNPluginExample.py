@@ -1,12 +1,10 @@
 import pathlib
-import runpy
 
 import unreal
 
 
 PLUGIN_MAP_PATH = "/MRBNN/Examples/MRBNNVolumeExample"
 PLUGIN_ROOT = pathlib.Path(__file__).resolve().parents[1]
-PLUGIN_ASSET_SCRIPT = PLUGIN_ROOT / "Scripts" / "Generate-MRBNNAssets.py"
 
 
 def level_editor():
@@ -109,17 +107,14 @@ def setup_current_level():
     volume.set_editor_property("directional_light_actor", sun)
     volume.set_editor_property("use_compute_global_shader", True)
     volume.set_editor_property("use_scene_view_extension_render_pass", True)
-    volume.set_editor_property("use_raymarch_shader", False)
     volume.configure_from_project_settings()
     volume.apply_paper_preview_settings()
     volume.set_editor_property("use_compute_global_shader", True)
     volume.set_editor_property("use_scene_view_extension_render_pass", True)
-    volume.set_editor_property("use_raymarch_shader", False)
     volume.set_editor_property("show_volume_billboard", False)
 
 
 def main():
-    runpy.run_path(str(PLUGIN_ASSET_SCRIPT), run_name="__main__")
     ensure_map(PLUGIN_MAP_PATH)
     setup_current_level()
     level_editor().save_current_level()

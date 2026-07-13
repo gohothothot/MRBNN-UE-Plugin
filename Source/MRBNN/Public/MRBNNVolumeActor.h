@@ -41,9 +41,6 @@ public:
 	TObjectPtr<UBoxComponent> VolumeBounds;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MRBNN")
-	TObjectPtr<UStaticMeshComponent> VolumeRaymarchMesh;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MRBNN")
 	TObjectPtr<UStaticMeshComponent> VolumeBillboard;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MRBNN")
@@ -88,7 +85,7 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Volume", meta = (EditCondition = "bUseComputeGlobalShader"))
 	bool bUseSceneViewExtensionRenderPass = true;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Volume", meta = (AdvancedDisplay))
+	UPROPERTY(Transient)
 	bool bUseRaymarchShader = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Volume")
@@ -127,40 +124,40 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Volume", meta = (ClampMin = "0.0", UIMin = "0.1", UIMax = "8.0"))
 	float PreviewBrightness = 1.8f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Volume Shader", meta = (ClampMin = "16", ClampMax = "128", UIMin = "32", UIMax = "96"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute Volume", meta = (ClampMin = "16", ClampMax = "128", UIMin = "32", UIMax = "96", DisplayName = "Volume Texture Resolution"))
 	int32 RaymarchTextureResolution = 80;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Volume Shader")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute Volume", meta = (DisplayName = "Fit To Density Bounds"))
 	bool bRaymarchFitToDensityBounds = true;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Volume Shader", meta = (EditCondition = "bRaymarchFitToDensityBounds", ClampMin = "0.0", UIMin = "0.0", UIMax = "32.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute Volume", meta = (EditCondition = "bRaymarchFitToDensityBounds", ClampMin = "0.0", UIMin = "0.0", UIMax = "32.0", DisplayName = "Bounds Threshold"))
 	float RaymarchBoundsThreshold = 4.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Volume Shader", meta = (EditCondition = "bRaymarchFitToDensityBounds", ClampMin = "0.0", ClampMax = "0.25", UIMin = "0.02", UIMax = "0.15"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute Volume", meta = (EditCondition = "bRaymarchFitToDensityBounds", ClampMin = "0.0", ClampMax = "0.25", UIMin = "0.02", UIMax = "0.15", DisplayName = "Bounds Padding"))
 	float RaymarchBoundsPadding = 0.08f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Volume Shader", meta = (ClampMin = "4", ClampMax = "96", UIMin = "16", UIMax = "64"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute Volume", meta = (ClampMin = "4", ClampMax = "96", UIMin = "16", UIMax = "64", DisplayName = "Base Step Count"))
 	int32 RaymarchStepCount = 40;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Volume Shader", meta = (ClampMin = "0.0", UIMin = "0.0", UIMax = "20.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute Volume", meta = (ClampMin = "0.0", UIMin = "0.0", UIMax = "20.0", DisplayName = "Density Input Threshold"))
 	float RaymarchInputThreshold = 4.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Volume Shader", meta = (ClampMin = "1.0", UIMin = "20.0", UIMax = "180.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute Volume", meta = (ClampMin = "1.0", UIMin = "20.0", UIMax = "180.0", DisplayName = "Density Normalize"))
 	float RaymarchNormalizeDensity = 96.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Volume Shader", meta = (ClampMin = "0.1", UIMin = "0.3", UIMax = "2.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute Volume", meta = (ClampMin = "0.1", UIMin = "0.3", UIMax = "2.0", DisplayName = "Density Power"))
 	float RaymarchDensityPower = 0.82f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Volume Shader", meta = (ClampMin = "0.0", UIMin = "0.01", UIMax = "0.25"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute Volume", meta = (ClampMin = "0.0", UIMin = "0.01", UIMax = "0.25", DisplayName = "Opacity"))
 	float RaymarchOpacity = 0.055f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Volume Shader", meta = (ClampMin = "0.0", UIMin = "0.0", UIMax = "2.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute Volume", meta = (ClampMin = "0.0", UIMin = "0.0", UIMax = "2.0", DisplayName = "Shadow Strength"))
 	float RaymarchShadowStrength = 0.55f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Volume Shader", meta = (ClampMin = "0.0", UIMin = "0.01", UIMax = "0.25"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute Volume", meta = (ClampMin = "0.0", UIMin = "0.01", UIMax = "0.25", DisplayName = "Light Step"))
 	float RaymarchLightStep = 0.075f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Volume Shader")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute Volume", meta = (DisplayName = "Cloud Color"))
 	FLinearColor RaymarchCloudColor = FLinearColor(0.86f, 0.90f, 0.92f, 1.0f);
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Direct Light", meta = (ClampMin = "0.0", UIMin = "0.0", UIMax = "4.0"))
@@ -238,7 +235,7 @@ public:
 	UFUNCTION(BlueprintCallable, CallInEditor, Category = "MRBNN|Volume")
 	bool RebuildDensityVolumePreview();
 
-	UFUNCTION(BlueprintCallable, CallInEditor, Category = "MRBNN|Volume")
+	UFUNCTION(BlueprintCallable, CallInEditor, Category = "MRBNN|Compute Volume", meta = (DisplayName = "Rebuild Compute Volume"))
 	bool RebuildVolumeShader();
 
 protected:
@@ -272,9 +269,6 @@ protected:
 	TObjectPtr<UMaterialInstanceDynamic> DensityVoxelMaterialInstance;
 
 	UPROPERTY(Transient)
-	TObjectPtr<UMaterialInstanceDynamic> RaymarchMaterialInstance;
-
-	UPROPERTY(Transient)
 	TObjectPtr<UVolumeTexture> RaymarchDensityTexture;
 
 	UPROPERTY(Transient)
@@ -288,30 +282,6 @@ protected:
 	double NextPresentationRefreshTimeSeconds = 0.0;
 	FLinearColor CurrentRaymarchDirectLightColor = FLinearColor::White;
 	float CurrentRaymarchDirectLightIntensity = 1.0f;
-	TObjectPtr<UVolumeTexture> LastAppliedRaymarchDensityTexture;
-	TObjectPtr<UVolumeTexture> LastAppliedRaymarchFeatureTexture;
-	FTransform LastAppliedRaymarchTransform;
-	FVector LastAppliedRaymarchLightDirection = FVector::ZeroVector;
-	FLinearColor LastAppliedRaymarchDirectLightColor = FLinearColor::Transparent;
-	FLinearColor LastAppliedRaymarchCloudColor = FLinearColor::Transparent;
-	FLinearColor LastAppliedRaymarchBakedFeatureTint = FLinearColor::Transparent;
-	FVector LastAppliedRaymarchExtent = FVector::ZeroVector;
-	int32 LastAppliedRaymarchStepCount = INDEX_NONE;
-	int32 LastAppliedRaymarchDirectShadowSteps = INDEX_NONE;
-	float LastAppliedRaymarchOpacity = -1.0f;
-	float LastAppliedRaymarchAmbient = -1.0f;
-	float LastAppliedRaymarchDirectional = -1.0f;
-	float LastAppliedRaymarchShadowStrength = -1.0f;
-	float LastAppliedRaymarchLightStep = -1.0f;
-	float LastAppliedRaymarchBrightness = -1.0f;
-	float LastAppliedRaymarchDirectLightIntensity = -1.0f;
-	float LastAppliedRaymarchDirectShadowDensity = -1.0f;
-	float LastAppliedRaymarchPhaseG = -2.0f;
-	float LastAppliedRaymarchPhaseStrength = -1.0f;
-	float LastAppliedRaymarchUseBakedFeatures = -1.0f;
-	float LastAppliedRaymarchBakedFeatureContribution = -1.0f;
-	float LastAppliedRaymarchMultiScatterContribution = -1.0f;
-	float LastAppliedRaymarchFeatureAlbedoBlend = -1.0f;
 	bool bEditorPreviewRenderAttempted = false;
 	bool bDensityPreviewBuilt = false;
 	bool bRaymarchTextureBuilt = false;

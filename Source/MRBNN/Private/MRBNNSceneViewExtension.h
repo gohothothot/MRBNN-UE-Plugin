@@ -20,9 +20,26 @@ protected:
 	virtual bool IsActiveThisFrame_Internal(const FSceneViewExtensionContext& Context) const override;
 
 private:
+	struct FPendingCloudRenderDesc
+	{
+		FMRBNNComputeRenderer::FRenderDesc RenderDesc;
+		float SortDepth = 0.0f;
+	};
+
+	struct FPendingViewRenderDescs
+	{
+		TArray<FPendingCloudRenderDesc> CloudDescs;
+		FTextureRHIRef DebugOutputTexture;
+		FIntPoint DebugOutputSize = FIntPoint::ZeroValue;
+		int32 DebugFrameIndex = 0;
+		int32 DebugDisplayMode = 0;
+		float DebugPreviewOpacity = 1.0f;
+		float DebugOverlayScale = 0.35f;
+	};
+
 	FScreenPassTexture PostProcessPass_RenderThread(FRDGBuilder& GraphBuilder, const FSceneView& View, const FPostProcessMaterialInputs& Inputs);
 
 	TWeakObjectPtr<AMRBNNVolumeActor> Actor;
 	mutable FCriticalSection PendingRenderDescsCriticalSection;
-	TArray<FMRBNNComputeRenderer::FRenderDesc> PendingRenderDescs;
+	TArray<FPendingViewRenderDescs> PendingRenderDescs;
 };

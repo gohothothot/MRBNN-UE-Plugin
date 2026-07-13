@@ -78,7 +78,7 @@ def setup_current_level():
 
     spawn_actor(
         "/Script/Engine.PlayerStart",
-        unreal.Vector(-520.0, 0.0, 160.0),
+        unreal.Vector(-460.0, 0.0, 160.0),
         unreal.Rotator(0.0, 0.0, 0.0),
         "PlayerStart",
     )
@@ -105,13 +105,37 @@ def setup_current_level():
         "MRBNNVolume",
     )
     volume.set_editor_property("directional_light_actor", sun)
+    volume.set_editor_property("auto_rebuild_on_parameter_change", True)
     volume.set_editor_property("use_compute_global_shader", True)
     volume.set_editor_property("use_scene_view_extension_render_pass", True)
     volume.configure_from_project_settings()
     volume.apply_paper_preview_settings()
+    volume.set_editor_property("volume_extent", unreal.Vector(240.0, 260.0, 95.0))
+    volume.set_editor_property("raymarch_input_threshold", 0.8)
+    volume.set_editor_property("raymarch_normalize_density", 88.0)
+    volume.set_editor_property("raymarch_density_power", 0.62)
+    volume.set_editor_property("raymarch_opacity", 0.048)
+    volume.set_editor_property("ambient_relight", 0.18)
+    volume.set_editor_property("directional_relight", 1.45)
+    volume.set_editor_property("raymarch_baked_feature_contribution", 0.45)
+    volume.set_editor_property("raymarch_multi_scatter_contribution", 0.65)
+    volume.set_editor_property("raymarch_feature_albedo_blend", 0.22)
     volume.set_editor_property("use_compute_global_shader", True)
     volume.set_editor_property("use_scene_view_extension_render_pass", True)
-    volume.set_editor_property("show_volume_billboard", False)
+    volume.set_editor_property("use_mrbnn_cloud_axis_mapping", True)
+
+    try:
+        actor_editor().set_selected_level_actors([volume])
+    except Exception:
+        pass
+
+    try:
+        level_editor().set_level_viewport_camera_info(
+            unreal.Vector(-460.0, 0.0, 160.0),
+            unreal.Rotator(0.0, 0.0, 0.0),
+        )
+    except Exception:
+        pass
 
 
 def main():

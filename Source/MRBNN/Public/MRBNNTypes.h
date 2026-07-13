@@ -110,6 +110,15 @@ struct MRBNN_API FMRBNNComputeVolumeSettings
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute", meta = (ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
 	float PhaseStrength = 0.75f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute", meta = (ClampMin = "0.0", ClampMax = "2.0", UIMin = "0.0", UIMax = "1.2"))
+	float EdgeSilverStrength = 0.55f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute", meta = (ClampMin = "0.0", ClampMax = "2.0", UIMin = "0.0", UIMax = "1.2"))
+	float DeepShadowStrength = 0.55f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute", meta = (ClampMin = "0.0", ClampMax = "2.0", UIMin = "0.0", UIMax = "1.2"))
+	float PowderStrength = 0.45f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute")
 	bool bUseBakedFeatures = true;
 

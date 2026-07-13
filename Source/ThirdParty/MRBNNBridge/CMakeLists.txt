@@ -1,10 +1,12 @@
 cmake_minimum_required(VERSION 3.21)
-project(MRBNNBridge LANGUAGES CXX CUDA)
+project(MRBNNBridge LANGUAGES C CXX CUDA)
 
 set(MRBNN_ROOT "" CACHE PATH "Path to the cloned Extra-Creativity/MRBNN repository")
 if(NOT MRBNN_ROOT)
 	message(FATAL_ERROR "Set MRBNN_ROOT to the cloned MRBNN repository.")
 endif()
+
+option(MRBNN_BUILD_BAKE_CONSOLE "Build the MRBNN Dear ImGui bake/debug console." OFF)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -87,4 +89,63 @@ if(WIN32)
 		COMMAND ${CMAKE_COMMAND} -E copy_if_different
 			$<TARGET_FILE:ExternalTCNN>
 			$<TARGET_FILE_DIR:MRBNNBridgeSmokeTest>)
+endif()
+
+if(MRBNN_BUILD_BAKE_CONSOLE)
+	set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+	set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+	set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+	set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+
+	FetchContent_Declare(
+		glfw
+		GIT_REPOSITORY https://github.com/glfw/glfw.git
+		GIT_TAG        7b6aead9fb88b3623e3b3725ebb42670cbe4c579
+	)
+	FetchContent_MakeAvailable(glfw)
+
+	FetchContent_Declare(
+		imgui
+		GIT_REPOSITORY https://github.com/ocornut/imgui.git
+		GIT_TAG        9a5d5c45f54b1301ea471622eddede70384243af
+	)
+	FetchContent_MakeAvailable(imgui)
+
+	add_library(MRBNNBakeConsoleImGui STATIC
+		${imgui_SOURCE_DIR}/imgui.cpp
+		${imgui_SOURCE_DIR}/imgui_draw.cpp
+		${imgui_SOURCE_DIR}/imgui_tables.cpp
+		${imgui_SOURCE_DIR}/imgui_widgets.cpp
+		${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
+		${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp)
+	target_compile_definitions(MRBNNBakeConsoleImGui PUBLIC GLFW_INCLUDE_NONE IMGUI_IMPL_OPENGL_LOADER_GLAD2)
+	target_include_directories(MRBNNBakeConsoleImGui PUBLIC
+		${imgui_SOURCE_DIR}
+		${imgui_SOURCE_DIR}/backends
+		"${MRBNN_ROOT}/src/display/glad/include")
+	target_link_libraries(MRBNNBakeConsoleImGui PUBLIC glfw)
+
+	add_library(MRBNNBakeConsoleGlad STATIC "${MRBNN_ROOT}/src/display/glad/src/gl.c")
+	target_include_directories(MRBNNBakeConsoleGlad PUBLIC "${MRBNN_ROOT}/src/display/glad/include")
+
+	add_executable(MRBNNBakeConsole MRBNNBakeConsole.cpp)
+	target_compile_features(MRBNNBakeConsole PRIVATE cxx_std_20)
+	target_link_libraries(MRBNNBakeConsole PRIVATE
+		MRBNNBridge
+		MRBNNBakeConsoleImGui
+		MRBNNBakeConsoleGlad
+		nlohmann_json::nlohmann_json
+		CUDA::cudart
+		CUDA::nvrtc)
+
+	if(WIN32)
+		target_link_libraries(MRBNNBakeConsole PRIVATE opengl32)
+		add_custom_command(TARGET MRBNNBakeConsole POST_BUILD
+			COMMAND ${CMAKE_COMMAND} -E copy_if_different
+				$<TARGET_FILE:MRBNNBridge>
+				$<TARGET_FILE_DIR:MRBNNBakeConsole>
+			COMMAND ${CMAKE_COMMAND} -E copy_if_different
+				$<TARGET_FILE:ExternalTCNN>
+				$<TARGET_FILE_DIR:MRBNNBakeConsole>)
+	endif()
 endif()

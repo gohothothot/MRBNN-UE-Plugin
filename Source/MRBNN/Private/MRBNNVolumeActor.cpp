@@ -6,24 +6,15 @@
 #include "Components/SceneComponent.h"
 #include "Components/BoxComponent.h"
 #include "Components/DirectionalLightComponent.h"
-#include "Components/HierarchicalInstancedStaticMeshComponent.h"
-#include "Components/InstancedStaticMeshComponent.h"
-#include "Components/TextRenderComponent.h"
-#include "Components/StaticMeshComponent.h"
 #include "Dom/JsonObject.h"
 #include "Engine/CollisionProfile.h"
 #include "Engine/DirectionalLight.h"
-#include "Engine/StaticMesh.h"
-#include "Engine/Texture.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "Engine/VolumeTexture.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "HAL/FileManager.h"
-#include "ImageUtils.h"
 #include "Interfaces/IPluginManager.h"
-#include "Materials/MaterialInstanceDynamic.h"
-#include "Materials/MaterialInterface.h"
 #include "Math/Float16.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
@@ -33,16 +24,10 @@
 #include "SceneViewExtension.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
-#include "UObject/ConstructorHelpers.h"
+#include "UObject/UnrealType.h"
 
 namespace
 {
-struct FMRBNNDensityVoxelCandidate
-{
-	FVector LocalPosition = FVector::ZeroVector;
-	float Density = 0.0f;
-};
-
 bool ReadJsonObject(const FString& Path, TSharedPtr<FJsonObject>& OutObject)
 {
 	FString JsonText;
@@ -301,6 +286,43 @@ FVector TransformWorldVectorToVolumeUnitBox(const FTransform& ActorTransform, co
 		LocalVector.Z / (SafeExtent.Z * 2.0f));
 	return VolumeVector.GetSafeNormal(UE_SMALL_NUMBER, Fallback);
 }
+
+FVector TransformWorldVectorToVolumeUnitBoxUnnormalized(const FTransform& ActorTransform, const FVector& VolumeExtent, const FVector& WorldVector)
+{
+	const FVector SafeExtent = GetSafeVolumeExtent(VolumeExtent);
+	const FVector LocalVector = ActorTransform.InverseTransformVectorNoScale(WorldVector);
+	return FVector(
+		LocalVector.X / (SafeExtent.X * 2.0f),
+		LocalVector.Y / (SafeExtent.Y * 2.0f),
+		LocalVector.Z / (SafeExtent.Z * 2.0f));
+}
+
+float UnitToSourceCoordinate(float Unit, int32 SourceMin, int32 SourceMax)
+{
+	return FMath::Lerp(static_cast<float>(SourceMin), static_cast<float>(SourceMax), FMath::Clamp(Unit, 0.0f, 1.0f));
+}
+
+FVector3f MakeSourcePositionFromVolumeUnit(
+	float UnitX,
+	float UnitY,
+	float UnitZ,
+	const FIntVector& SourceMin,
+	const FIntVector& SourceMax,
+	bool bUseMRBNNCloudAxisMapping)
+{
+	if (bUseMRBNNCloudAxisMapping)
+	{
+		return FVector3f(
+			UnitToSourceCoordinate(UnitY, SourceMin.X, SourceMax.X),
+			UnitToSourceCoordinate(UnitZ, SourceMin.Y, SourceMax.Y),
+			UnitToSourceCoordinate(UnitX, SourceMin.Z, SourceMax.Z));
+	}
+
+	return FVector3f(
+		UnitToSourceCoordinate(UnitX, SourceMin.X, SourceMax.X),
+		UnitToSourceCoordinate(UnitY, SourceMin.Y, SourceMax.Y),
+		UnitToSourceCoordinate(UnitZ, SourceMin.Z, SourceMax.Z));
+}
 }
 
 AMRBNNVolumeActor::AMRBNNVolumeActor()
@@ -319,61 +341,6 @@ AMRBNNVolumeActor::AMRBNNVolumeActor()
 	VolumeBounds->SetCollisionProfileName(UCollisionProfile::NoCollision_ProfileName);
 	VolumeBounds->SetLineThickness(2.0f);
 
-	VolumeSlices = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("VolumeSlices"));
-	VolumeSlices->SetupAttachment(SceneRoot);
-	VolumeSlices->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	VolumeSlices->SetCollisionProfileName(UCollisionProfile::NoCollision_ProfileName);
-	VolumeSlices->SetCastShadow(false);
-	VolumeSlices->bReceivesDecals = false;
-	VolumeSlices->TranslucencySortPriority = 10;
-
-	static ConstructorHelpers::FObjectFinder<UStaticMesh> PlaneMeshFinder(TEXT("/Engine/BasicShapes/Plane.Plane"));
-
-	VolumeBillboard = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("VolumeBillboard"));
-	VolumeBillboard->SetupAttachment(SceneRoot);
-	VolumeBillboard->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	VolumeBillboard->SetCollisionProfileName(UCollisionProfile::NoCollision_ProfileName);
-	VolumeBillboard->SetCastShadow(false);
-	VolumeBillboard->bReceivesDecals = false;
-	VolumeBillboard->TranslucencySortPriority = 11;
-	if (PlaneMeshFinder.Succeeded())
-	{
-		VolumeBillboard->SetStaticMesh(PlaneMeshFinder.Object);
-		VolumeSlices->SetStaticMesh(PlaneMeshFinder.Object);
-	}
-
-	VolumeDensityVoxels = CreateDefaultSubobject<UHierarchicalInstancedStaticMeshComponent>(TEXT("VolumeDensityVoxels"));
-	VolumeDensityVoxels->SetupAttachment(SceneRoot);
-	VolumeDensityVoxels->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	VolumeDensityVoxels->SetCollisionProfileName(UCollisionProfile::NoCollision_ProfileName);
-	VolumeDensityVoxels->SetCastShadow(false);
-	VolumeDensityVoxels->bReceivesDecals = false;
-	VolumeDensityVoxels->TranslucencySortPriority = 12;
-
-	static ConstructorHelpers::FObjectFinder<UStaticMesh> CubeMeshFinder(TEXT("/Engine/BasicShapes/Cube.Cube"));
-	if (CubeMeshFinder.Succeeded())
-	{
-		VolumeDensityVoxels->SetStaticMesh(CubeMeshFinder.Object);
-	}
-
-	static ConstructorHelpers::FObjectFinder<UMaterialInterface> SliceMaterialFinder(TEXT("/Engine/EngineMaterials/Widget3DPassThrough_Translucent_OneSided.Widget3DPassThrough_Translucent_OneSided"));
-	if (SliceMaterialFinder.Succeeded())
-	{
-		VolumeBillboard->SetMaterial(0, SliceMaterialFinder.Object);
-		VolumeDensityVoxels->SetMaterial(0, SliceMaterialFinder.Object);
-		VolumeSlices->SetMaterial(0, SliceMaterialFinder.Object);
-	}
-
-	DebugText = CreateDefaultSubobject<UTextRenderComponent>(TEXT("DebugText"));
-	DebugText->SetupAttachment(SceneRoot);
-	DebugText->SetRelativeLocation(FVector(-160.0f, -230.0f, 190.0f));
-	DebugText->SetRelativeRotation(FRotator(0.0f, 35.0f, 0.0f));
-	DebugText->SetHorizontalAlignment(EHTA_Left);
-	DebugText->SetVerticalAlignment(EVRTA_TextTop);
-	DebugText->SetTextRenderColor(FColor(220, 235, 255));
-	DebugText->SetWorldSize(12.0f);
-	DebugText->SetCastShadow(false);
-
 	MRBNNVolume = CreateDefaultSubobject<UMRBNNVolumeComponent>(TEXT("MRBNNVolume"));
 	MRBNNVolume->bUseProjectSettingsWhenBakedDataMissing = true;
 	MRBNNVolume->bAutoInitialize = false;
@@ -381,7 +348,86 @@ AMRBNNVolumeActor::AMRBNNVolumeActor()
 	MRBNNVolume->bUsePlayerCamera = true;
 	MRBNNVolume->bApplyOutputToMaterials = false;
 	MRBNNVolume->bAllowAutomaticRenderInEditor = false;
-	MRBNNVolume->ApplyRealtimePreviewSettings();
+	SyncComponentSettingsFromActor();
+}
+
+void AMRBNNVolumeActor::SyncComponentSettingsFromActor()
+{
+	if (!MRBNNVolume)
+	{
+		return;
+	}
+
+	MRBNNVolume->BakedData = ResolveActiveBakedData();
+	MRBNNVolume->bUseProjectSettingsWhenBakedDataMissing = bUseProjectSettingsWhenBakedDataMissing;
+	MRBNNVolume->OutputWidth = FMath::Max(OutputWidth, 1);
+	MRBNNVolume->OutputHeight = FMath::Max(OutputHeight, 1);
+	MRBNNVolume->SamplesPerRender = FMath::Max(SamplesPerRender, 1);
+	MRBNNVolume->bAccumulateFrames = bAccumulateFrames;
+	MRBNNVolume->MaxAccumulatedFrames = FMath::Max(MaxAccumulatedFrames, 1);
+	MRBNNVolume->SpatialDenoisePasses = FMath::Clamp(SpatialDenoisePasses, 0, 4);
+	MRBNNVolume->bAutoInitialize = false;
+	MRBNNVolume->bRenderEveryTick = false;
+	MRBNNVolume->bUsePlayerCamera = true;
+	MRBNNVolume->bApplyOutputToMaterials = false;
+	MRBNNVolume->bAllowAutomaticRenderInEditor = bAllowLiveRenderInEditor;
+}
+
+UMRBNNBakedVolumeData* AMRBNNVolumeActor::ResolveActiveBakedData()
+{
+	if (BakedData || !bUseProjectSettingsWhenBakedDataMissing)
+	{
+		return BakedData;
+	}
+
+	FText Error;
+	BakedData = UMRBNNProjectSettings::Get()->CreateTransientDefaultBakedData(this, Error);
+	if (!BakedData && !Error.IsEmpty())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("MRBNN project data could not be resolved: %s"), *Error.ToString());
+	}
+	return BakedData;
+}
+
+void AMRBNNVolumeActor::RefreshResolvedDataFields()
+{
+	ResolvedRepositoryRoot.Reset();
+	ResolvedWorkingDirectory.Reset();
+	ResolvedDensityVolumePath.Reset();
+
+	UMRBNNBakedVolumeData* Data = ResolveActiveBakedData();
+	if (!Data)
+	{
+		return;
+	}
+
+	FText Error;
+	if (!Data->ResolvePaths(ResolvedWorkingDirectory, ResolvedRepositoryRoot, Error))
+	{
+		ResolvedWorkingDirectory = Error.ToString();
+		return;
+	}
+
+	FString VolumePath;
+	FIntVector VolumeResolution;
+	int32 SkipByteCount = 0;
+	if (ResolveDensityVolumeFile(VolumePath, VolumeResolution, SkipByteCount, Error))
+	{
+		ResolvedDensityVolumePath = VolumePath;
+	}
+	else if (!Error.IsEmpty())
+	{
+		ResolvedDensityVolumePath = Error.ToString();
+	}
+}
+
+void AMRBNNVolumeActor::ResetRenderState()
+{
+	if (MRBNNVolume)
+	{
+		MRBNNVolume->ResetProgressiveAccumulation();
+	}
+	bEditorPreviewRenderAttempted = false;
 }
 
 void AMRBNNVolumeActor::OnConstruction(const FTransform& Transform)
@@ -394,14 +440,12 @@ void AMRBNNVolumeActor::OnConstruction(const FTransform& Transform)
 	}
 	else
 	{
+		SyncComponentSettingsFromActor();
+		RefreshResolvedDataFields();
 		UpdateVolumeProxy();
 		if (!bRaymarchTextureBuilt)
 		{
 			BuildRaymarchVolumeTexture();
-		}
-		if (!bDensityPreviewBuilt)
-		{
-			BuildDensityVolumePreview();
 		}
 		UpdateRelightFromDirectionalLight();
 		EnsureComputeViewExtension();
@@ -414,6 +458,69 @@ void AMRBNNVolumeActor::OnConstruction(const FTransform& Transform)
 	}
 }
 
+#if WITH_EDITOR
+void AMRBNNVolumeActor::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
+{
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+
+	if (HasAnyFlags(RF_ClassDefaultObject))
+	{
+		return;
+	}
+
+	const FName PropertyName = PropertyChangedEvent.MemberProperty
+		? PropertyChangedEvent.MemberProperty->GetFName()
+		: (PropertyChangedEvent.Property ? PropertyChangedEvent.Property->GetFName() : NAME_None);
+
+	if (PropertyName == GET_MEMBER_NAME_CHECKED(AMRBNNVolumeActor, bAutoConfigureFromProjectSettings) && bAutoConfigureFromProjectSettings)
+	{
+		ConfigureFromProjectSettings();
+		return;
+	}
+
+	const bool bNeedsTextureRebuild =
+		PropertyName == GET_MEMBER_NAME_CHECKED(AMRBNNVolumeActor, BakedData) ||
+		PropertyName == GET_MEMBER_NAME_CHECKED(AMRBNNVolumeActor, bUseProjectSettingsWhenBakedDataMissing) ||
+		PropertyName == GET_MEMBER_NAME_CHECKED(AMRBNNVolumeActor, RaymarchTextureResolution) ||
+		PropertyName == GET_MEMBER_NAME_CHECKED(AMRBNNVolumeActor, bRaymarchFitToDensityBounds) ||
+		PropertyName == GET_MEMBER_NAME_CHECKED(AMRBNNVolumeActor, bUseMRBNNCloudAxisMapping) ||
+		PropertyName == GET_MEMBER_NAME_CHECKED(AMRBNNVolumeActor, RaymarchBoundsThreshold) ||
+		PropertyName == GET_MEMBER_NAME_CHECKED(AMRBNNVolumeActor, RaymarchBoundsPadding) ||
+		PropertyName == GET_MEMBER_NAME_CHECKED(AMRBNNVolumeActor, RaymarchInputThreshold) ||
+		PropertyName == GET_MEMBER_NAME_CHECKED(AMRBNNVolumeActor, RaymarchNormalizeDensity) ||
+		PropertyName == GET_MEMBER_NAME_CHECKED(AMRBNNVolumeActor, RaymarchDensityPower) ||
+		PropertyName == GET_MEMBER_NAME_CHECKED(AMRBNNVolumeActor, bUseBakedFeatureLighting) ||
+		PropertyName == GET_MEMBER_NAME_CHECKED(AMRBNNVolumeActor, RaymarchBakedFeatureLevel);
+
+	SyncComponentSettingsFromActor();
+	RefreshResolvedDataFields();
+	UpdateVolumeProxy();
+	UpdateRelightFromDirectionalLight();
+
+	if (bNeedsTextureRebuild)
+	{
+		bRaymarchTextureBuilt = false;
+		RaymarchDensityTexture = nullptr;
+		RaymarchFeatureTexture = nullptr;
+		RaymarchTextureBuildKey.Empty();
+	}
+	ResetRenderState();
+
+	if (bAutoRebuildOnParameterChange)
+	{
+		if (bNeedsTextureRebuild)
+		{
+			BuildRaymarchVolumeTexture();
+		}
+		EnsureComputeViewExtension();
+		if (!ShouldUseSceneViewExtensionRenderPass())
+		{
+			RenderComputeGlobalShaderPreview();
+		}
+	}
+}
+#endif
+
 void AMRBNNVolumeActor::BeginPlay()
 {
 	Super::BeginPlay();
@@ -421,6 +528,11 @@ void AMRBNNVolumeActor::BeginPlay()
 	if (bAutoConfigureFromProjectSettings)
 	{
 		ConfigureFromProjectSettings();
+	}
+	else
+	{
+		SyncComponentSettingsFromActor();
+		RefreshResolvedDataFields();
 	}
 
 	EnsureComputeViewExtension();
@@ -458,6 +570,7 @@ void AMRBNNVolumeActor::Tick(float DeltaSeconds)
 	}
 
 	NextPresentationRefreshTimeSeconds = NowSeconds + 0.1;
+	SyncComponentSettingsFromActor();
 	UpdateRelightFromDirectionalLight();
 	EnsureComputeViewExtension();
 	if (!ShouldUseSceneViewExtensionRenderPass())
@@ -471,23 +584,19 @@ void AMRBNNVolumeActor::Tick(float DeltaSeconds)
 void AMRBNNVolumeActor::ConfigureFromProjectSettings()
 {
 	const UMRBNNProjectSettings* Settings = UMRBNNProjectSettings::Get();
-	if (MRBNNVolume)
+	bUseProjectSettingsWhenBakedDataMissing = true;
+	if (!BakedData)
 	{
-		MRBNNVolume->ApplyRealtimePreviewSettings();
-		MRBNNVolume->bAutoInitialize = false;
-		MRBNNVolume->bRenderEveryTick = false;
-		MRBNNVolume->bUseProjectSettingsWhenBakedDataMissing = true;
-		if (!MRBNNVolume->BakedData)
-		{
-			FText Error;
-			MRBNNVolume->BakedData = Settings->CreateTransientDefaultBakedData(this, Error);
-		}
+		FText Error;
+		BakedData = Settings->CreateTransientDefaultBakedData(this, Error);
 	}
+	SyncComponentSettingsFromActor();
+	RefreshResolvedDataFields();
+	ResetRenderState();
 	bEditorPreviewRenderAttempted = false;
 
 	UpdateVolumeProxy();
 	BuildRaymarchVolumeTexture();
-	BuildDensityVolumePreview();
 	UpdateRelightFromDirectionalLight();
 	EnsureComputeViewExtension();
 	if (!ShouldUseSceneViewExtensionRenderPass())
@@ -505,7 +614,7 @@ bool AMRBNNVolumeActor::BakeCurrentDataToPluginData()
 		return false;
 	}
 
-	UMRBNNBakedVolumeData* SourceData = MRBNNVolume->BakedData;
+	UMRBNNBakedVolumeData* SourceData = ResolveActiveBakedData();
 	if (!SourceData)
 	{
 		FText Error;
@@ -525,6 +634,7 @@ bool AMRBNNVolumeActor::BakeCurrentDataToPluginData()
 	}
 	else
 	{
+		BakedData = nullptr;
 		ConfigureFromProjectSettings();
 	}
 
@@ -561,22 +671,21 @@ bool AMRBNNVolumeActor::RenderPreviewOnce()
 
 void AMRBNNVolumeActor::ApplyRealtimePreviewSettings()
 {
-	if (MRBNNVolume)
-	{
-		MRBNNVolume->ApplyRealtimePreviewSettings();
-		MRBNNVolume->bAutoInitialize = false;
-		MRBNNVolume->bRenderEveryTick = false;
-	}
-	bShowVolumeBillboard = false;
 	bUseComputeGlobalShader = true;
 	bUseSceneViewExtensionRenderPass = true;
 	bUseRaymarchShader = false;
-	bShowDensityVolume = false;
-	bFitDensityPreviewToBounds = true;
+	OutputWidth = 384;
+	OutputHeight = 384;
+	SamplesPerRender = 1;
+	bAccumulateFrames = true;
+	MaxAccumulatedFrames = 12;
+	SpatialDenoisePasses = 0;
+	VolumeExtent = FVector(240.0f, 260.0f, 95.0f);
 	RaymarchTextureResolution = 80;
 	bRaymarchFitToDensityBounds = true;
-	RaymarchBoundsThreshold = 4.0f;
-	RaymarchBoundsPadding = 0.08f;
+	bUseMRBNNCloudAxisMapping = true;
+	RaymarchBoundsThreshold = 1.0f;
+	RaymarchBoundsPadding = 0.14f;
 	RaymarchStepCount = 40;
 	RaymarchInputThreshold = 4.0f;
 	RaymarchNormalizeDensity = 96.0f;
@@ -589,48 +698,55 @@ void AMRBNNVolumeActor::ApplyRealtimePreviewSettings()
 	RaymarchDirectShadowDensity = 1.35f;
 	RaymarchPhaseG = 0.35f;
 	RaymarchPhaseStrength = 0.75f;
+	RaymarchEdgeSilverStrength = 0.55f;
+	RaymarchDeepShadowStrength = 0.55f;
+	RaymarchPowderStrength = 0.45f;
 	bUseBakedFeatureLighting = true;
 	RaymarchBakedFeatureLevel = 2;
-	RaymarchBakedFeatureContribution = 0.65f;
-	RaymarchMultiScatterContribution = 0.75f;
-	RaymarchFeatureAlbedoBlend = 0.25f;
+	RaymarchBakedFeatureContribution = 0.4f;
+	RaymarchMultiScatterContribution = 0.55f;
+	RaymarchFeatureAlbedoBlend = 0.18f;
 	RaymarchBakedFeatureTint = FLinearColor(1.0f, 0.965f, 0.88f, 1.0f);
-	DensitySampleResolution = 48;
-	MaxDensityVoxelInstances = 4200;
-	DensityThreshold = 10.0f;
-	DensityVoxelScale = 2.85f;
-	DensityVoxelOpacity = 0.17f;
-	DensityBoundsFill = 0.88f;
+	AmbientRelight = 0.22f;
+	DirectionalRelight = 1.25f;
 	bEditorPreviewRenderAttempted = false;
+	SyncComponentSettingsFromActor();
+	if (MRBNNVolume)
+	{
+		MRBNNVolume->RenderSettings.bFastDirectIllumination = true;
+		MRBNNVolume->RenderSettings.bEnableSkybox = false;
+		MRBNNVolume->RenderSettings.bEnableSkyboxBaking = false;
+	}
+	RefreshResolvedDataFields();
+	ResetRenderState();
 	RebuildVolumeShader();
 	EnsureComputeViewExtension();
 	if (!ShouldUseSceneViewExtensionRenderPass())
 	{
 		RenderComputeGlobalShaderPreview();
 	}
-	RebuildDensityVolumePreview();
+	UpdateVolumeProxy();
 	UpdateVolumeMaterial();
 	UpdateDebugText();
 }
 
 void AMRBNNVolumeActor::ApplyMobilePreviewSettings()
 {
-	if (MRBNNVolume)
-	{
-		MRBNNVolume->ApplyMobilePreviewSettings();
-		MRBNNVolume->bAutoInitialize = false;
-		MRBNNVolume->bRenderEveryTick = false;
-	}
-	bShowVolumeBillboard = false;
 	bUseComputeGlobalShader = true;
 	bUseSceneViewExtensionRenderPass = true;
 	bUseRaymarchShader = false;
-	bShowDensityVolume = false;
-	bFitDensityPreviewToBounds = true;
+	OutputWidth = 256;
+	OutputHeight = 256;
+	SamplesPerRender = 1;
+	bAccumulateFrames = true;
+	MaxAccumulatedFrames = 6;
+	SpatialDenoisePasses = 0;
+	VolumeExtent = FVector(240.0f, 260.0f, 95.0f);
 	RaymarchTextureResolution = 48;
 	bRaymarchFitToDensityBounds = true;
-	RaymarchBoundsThreshold = 6.0f;
-	RaymarchBoundsPadding = 0.08f;
+	bUseMRBNNCloudAxisMapping = true;
+	RaymarchBoundsThreshold = 2.0f;
+	RaymarchBoundsPadding = 0.12f;
 	RaymarchStepCount = 22;
 	RaymarchInputThreshold = 6.0f;
 	RaymarchNormalizeDensity = 104.0f;
@@ -643,26 +759,34 @@ void AMRBNNVolumeActor::ApplyMobilePreviewSettings()
 	RaymarchDirectShadowDensity = 1.1f;
 	RaymarchPhaseG = 0.25f;
 	RaymarchPhaseStrength = 0.55f;
+	RaymarchEdgeSilverStrength = 0.35f;
+	RaymarchDeepShadowStrength = 0.4f;
+	RaymarchPowderStrength = 0.3f;
 	bUseBakedFeatureLighting = true;
 	RaymarchBakedFeatureLevel = 1;
 	RaymarchBakedFeatureContribution = 0.45f;
 	RaymarchMultiScatterContribution = 0.5f;
 	RaymarchFeatureAlbedoBlend = 0.18f;
 	RaymarchBakedFeatureTint = FLinearColor(1.0f, 0.965f, 0.88f, 1.0f);
-	DensitySampleResolution = 36;
-	MaxDensityVoxelInstances = 2200;
-	DensityThreshold = 20.0f;
-	DensityVoxelScale = 3.2f;
-	DensityVoxelOpacity = 0.2f;
-	DensityBoundsFill = 0.86f;
+	AmbientRelight = 0.18f;
+	DirectionalRelight = 1.0f;
 	bEditorPreviewRenderAttempted = false;
+	SyncComponentSettingsFromActor();
+	if (MRBNNVolume)
+	{
+		MRBNNVolume->RenderSettings.bFastDirectIllumination = true;
+		MRBNNVolume->RenderSettings.bEnableSkybox = false;
+		MRBNNVolume->RenderSettings.bEnableSkyboxBaking = false;
+	}
+	RefreshResolvedDataFields();
+	ResetRenderState();
 	RebuildVolumeShader();
 	EnsureComputeViewExtension();
 	if (!ShouldUseSceneViewExtensionRenderPass())
 	{
 		RenderComputeGlobalShaderPreview();
 	}
-	RebuildDensityVolumePreview();
+	UpdateVolumeProxy();
 	UpdateVolumeMaterial();
 	UpdateDebugText();
 }
@@ -673,35 +797,52 @@ void AMRBNNVolumeActor::ApplyPaperPreviewSettings()
 	bUseSceneViewExtensionRenderPass = true;
 	bUseRaymarchShader = false;
 	bUseBakedFeatureLighting = true;
-	bUseFallbackPreviewBeforeRender = true;
-	bHideSlicesUntilFirstRender = false;
-	bShowVolumeBillboard = false;
-	bUseExperimentalSliceStack = false;
-	bShowDensityVolume = false;
 	bAutoRenderOnBeginPlay = true;
 	bAllowLiveRenderInEditor = true;
 	bAutoRenderEditorPreviewOnce = true;
+	OutputWidth = 1024;
+	OutputHeight = 1024;
+	SamplesPerRender = 8;
+	bAccumulateFrames = true;
+	MaxAccumulatedFrames = 128;
+	SpatialDenoisePasses = 2;
+	VolumeExtent = FVector(240.0f, 260.0f, 95.0f);
 	RaymarchTextureResolution = 96;
+	bRaymarchFitToDensityBounds = true;
+	bUseMRBNNCloudAxisMapping = true;
+	RaymarchBoundsThreshold = 0.45f;
+	RaymarchBoundsPadding = 0.18f;
+	RaymarchInputThreshold = 0.8f;
+	RaymarchNormalizeDensity = 88.0f;
+	RaymarchDensityPower = 0.62f;
 	RaymarchStepCount = 64;
 	RaymarchBakedFeatureLevel = 3;
-	RaymarchBakedFeatureContribution = 0.85f;
-	RaymarchMultiScatterContribution = 1.0f;
-	RaymarchFeatureAlbedoBlend = 0.35f;
-	RaymarchOpacity = 0.052f;
+	RaymarchBakedFeatureContribution = 0.45f;
+	RaymarchMultiScatterContribution = 0.65f;
+	RaymarchFeatureAlbedoBlend = 0.22f;
+	RaymarchOpacity = 0.048f;
 	RaymarchShadowStrength = 0.62f;
 	RaymarchDirectShadowSteps = 6;
+	RaymarchEdgeSilverStrength = 0.72f;
+	RaymarchDeepShadowStrength = 0.68f;
+	RaymarchPowderStrength = 0.58f;
 	PreviewBrightness = 1.65f;
-	AmbientRelight = 0.48f;
-	DirectionalRelight = 0.62f;
+	AmbientRelight = 0.18f;
+	DirectionalRelight = 1.45f;
 
+	SyncComponentSettingsFromActor();
 	if (MRBNNVolume)
 	{
-		MRBNNVolume->ApplyPaperPreviewSettings();
-		MRBNNVolume->bAutoInitialize = false;
-		MRBNNVolume->bRenderEveryTick = false;
-		MRBNNVolume->bAllowAutomaticRenderInEditor = true;
+		MRBNNVolume->RenderSettings.ToneMapping = EMRBNNToneMapping::ACES;
+		MRBNNVolume->RenderSettings.Denoise = EMRBNNDenoiseMode::VisualPlausible;
+		MRBNNVolume->RenderSettings.Compatibility = EMRBNNCompatibilityMode::Normal;
+		MRBNNVolume->RenderSettings.bExcludeLightEncoding = true;
+		MRBNNVolume->RenderSettings.bFastDirectIllumination = false;
+		MRBNNVolume->RenderSettings.bEnableSkybox = false;
+		MRBNNVolume->RenderSettings.bEnableSkyboxBaking = true;
 	}
-
+	RefreshResolvedDataFields();
+	ResetRenderState();
 	BuildRaymarchVolumeTexture();
 	UpdateRelightFromDirectionalLight();
 	EnsureComputeViewExtension();
@@ -709,6 +850,7 @@ void AMRBNNVolumeActor::ApplyPaperPreviewSettings()
 	{
 		RenderComputeGlobalShaderPreview();
 	}
+	UpdateVolumeProxy();
 	UpdateVolumeMaterial();
 	UpdateDebugText();
 }
@@ -731,8 +873,19 @@ bool AMRBNNVolumeActor::RebuildDensityVolumePreview()
 
 bool AMRBNNVolumeActor::RebuildVolumeShader()
 {
+	SyncComponentSettingsFromActor();
+	RefreshResolvedDataFields();
+	ResetRenderState();
 	bRaymarchTextureBuilt = false;
-	return BuildRaymarchVolumeTexture();
+	const bool bBuilt = BuildRaymarchVolumeTexture();
+	UpdateRelightFromDirectionalLight();
+	UpdateVolumeProxy();
+	EnsureComputeViewExtension();
+	if (!ShouldUseSceneViewExtensionRenderPass())
+	{
+		RenderComputeGlobalShaderPreview();
+	}
+	return bBuilt;
 }
 
 void AMRBNNVolumeActor::UpdateVolumeProxy()
@@ -745,41 +898,6 @@ void AMRBNNVolumeActor::UpdateVolumeProxy()
 	{
 		VolumeBounds->SetBoxExtent(SafeExtent);
 	}
-
-	if (VolumeBillboard)
-	{
-		VolumeBillboard->SetRelativeLocation(FVector::ZeroVector);
-		VolumeBillboard->SetRelativeRotation(FRotator(90.0f, 0.0f, 0.0f));
-		VolumeBillboard->SetRelativeScale3D(FVector(SafeExtent.Y * 2.0f / 100.0f, SafeExtent.Z * 2.0f / 100.0f, 1.0f));
-	}
-
-	if (VolumeDensityVoxels)
-	{
-		VolumeDensityVoxels->SetVisibility(bShowDensityVolume, true);
-	}
-
-	if (!VolumeSlices)
-	{
-		return;
-	}
-
-	VolumeSlices->ClearInstances();
-	if (!bUseExperimentalSliceStack)
-	{
-		VolumeSlices->SetVisibility(false, true);
-		return;
-	}
-
-	const int32 SafeSliceCount = FMath::Clamp(SliceCount, 1, 64);
-	const float Depth = SafeExtent.X * 2.0f;
-	const FVector SliceScale(SafeExtent.Y * 2.0f / 100.0f, SafeExtent.Z * 2.0f / 100.0f, 1.0f);
-	for (int32 SliceIndex = 0; SliceIndex < SafeSliceCount; ++SliceIndex)
-	{
-		const float Unit = (static_cast<float>(SliceIndex) + 0.5f) / static_cast<float>(SafeSliceCount);
-		const float LocalX = (Unit - 0.5f) * Depth;
-		const FTransform SliceTransform(FRotator(90.0f, 0.0f, 0.0f), FVector(LocalX, 0.0f, 0.0f), SliceScale);
-		VolumeSlices->AddInstance(SliceTransform);
-	}
 }
 
 bool AMRBNNVolumeActor::ResolveDensityVolumeFile(FString& OutVolumePath, FIntVector& OutResolution, int32& OutSkipByteCount, FText& OutError)
@@ -788,18 +906,16 @@ bool AMRBNNVolumeActor::ResolveDensityVolumeFile(FString& OutVolumePath, FIntVec
 	OutResolution = FIntVector(257, 257, 257);
 	OutSkipByteCount = 0;
 
-	if (!MRBNNVolume)
-	{
-		OutError = FText::FromString(TEXT("MRBNN volume component is missing."));
-		return false;
-	}
-
-	UMRBNNBakedVolumeData* Data = MRBNNVolume->BakedData;
+	UMRBNNBakedVolumeData* Data = ResolveActiveBakedData();
 	if (!Data)
 	{
 		FText DefaultDataError;
 		Data = UMRBNNProjectSettings::Get()->CreateTransientDefaultBakedData(this, DefaultDataError);
-		MRBNNVolume->BakedData = Data;
+		BakedData = Data;
+		if (MRBNNVolume)
+		{
+			MRBNNVolume->BakedData = Data;
+		}
 		if (!Data)
 		{
 			OutError = DefaultDataError.IsEmpty() ? FText::FromString(TEXT("MRBNN default baked data is not available.")) : DefaultDataError;
@@ -878,7 +994,7 @@ bool AMRBNNVolumeActor::BuildRaymarchVolumeTexture()
 	FText Error;
 	if (!ResolveDensityVolumeFile(VolumePath, VolumeResolution, SkipByteCount, Error))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("MRBNN raymarch texture could not resolve density volume: %s"), *Error.ToString());
+		UE_LOG(LogTemp, Warning, TEXT("MRBNN compute density texture could not resolve density volume: %s"), *Error.ToString());
 		RaymarchDensityTexture = nullptr;
 		RaymarchFeatureTexture = nullptr;
 		RaymarchTextureBuildKey.Empty();
@@ -952,7 +1068,7 @@ bool AMRBNNVolumeActor::BuildRaymarchVolumeTexture()
 	}
 
 	FString BuildKey = FString::Printf(
-		TEXT("%s|%lld|%d,%d,%d|%d|%d|%d|%.6f|%.6f|%.6f|%.6f|%.6f"),
+		TEXT("%s|%lld|%d,%d,%d|%d|%d|%d|%d|%.6f|%.6f|%.6f|%.6f|%.6f"),
 		*VolumePath,
 		VolumeTimestamp.GetTicks(),
 		VolumeResolution.X,
@@ -961,6 +1077,7 @@ bool AMRBNNVolumeActor::BuildRaymarchVolumeTexture()
 		SkipByteCount,
 		FMath::Clamp(RaymarchTextureResolution, 16, 128),
 		bRaymarchFitToDensityBounds ? 1 : 0,
+		bUseMRBNNCloudAxisMapping ? 1 : 0,
 		RaymarchBoundsThreshold,
 		RaymarchBoundsPadding,
 		RaymarchInputThreshold,
@@ -977,7 +1094,7 @@ bool AMRBNNVolumeActor::BuildRaymarchVolumeTexture()
 	TArray<uint8> RawBytes;
 	if (!FFileHelper::LoadFileToArray(RawBytes, *VolumePath))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("MRBNN raymarch texture could not read volume file: %s"), *VolumePath);
+		UE_LOG(LogTemp, Warning, TEXT("MRBNN compute density texture could not read volume file: %s"), *VolumePath);
 		RaymarchDensityTexture = nullptr;
 		RaymarchFeatureTexture = nullptr;
 		RaymarchTextureBuildKey.Empty();
@@ -987,7 +1104,7 @@ bool AMRBNNVolumeActor::BuildRaymarchVolumeTexture()
 	const int64 SourceVoxelCount = static_cast<int64>(VolumeResolution.X) * VolumeResolution.Y * VolumeResolution.Z;
 	if (SourceVoxelCount <= 0 || RawBytes.Num() < SkipByteCount + SourceVoxelCount * static_cast<int64>(sizeof(float)))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("MRBNN raymarch texture volume file is smaller than config resolution requires."));
+		UE_LOG(LogTemp, Warning, TEXT("MRBNN compute density texture volume file is smaller than config resolution requires."));
 		RaymarchDensityTexture = nullptr;
 		RaymarchFeatureTexture = nullptr;
 		RaymarchTextureBuildKey.Empty();
@@ -998,7 +1115,7 @@ bool AMRBNNVolumeActor::BuildRaymarchVolumeTexture()
 	UVolumeTexture* NewTexture = UVolumeTexture::CreateTransient(TextureResolution, TextureResolution, TextureResolution, PF_B8G8R8A8, TEXT("MRBNN_DensityVolume"));
 	if (!NewTexture || !NewTexture->GetPlatformData() || NewTexture->GetPlatformData()->Mips.IsEmpty())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("MRBNN raymarch texture could not allocate a transient volume texture."));
+		UE_LOG(LogTemp, Warning, TEXT("MRBNN compute density texture could not allocate a transient volume texture."));
 		RaymarchDensityTexture = nullptr;
 		RaymarchTextureBuildKey.Empty();
 		return false;
@@ -1042,7 +1159,7 @@ bool AMRBNNVolumeActor::BuildRaymarchVolumeTexture()
 
 	if (bRaymarchFitToDensityBounds)
 	{
-		const float BoundsThreshold = FMath::Max(RaymarchBoundsThreshold, RaymarchInputThreshold);
+		const float BoundsThreshold = FMath::Max(RaymarchBoundsThreshold, 0.0f);
 		FIntVector ActiveMin(LastSourceX, LastSourceY, LastSourceZ);
 		FIntVector ActiveMax(0, 0, 0);
 		int64 ActiveVoxelCount = 0;
@@ -1089,7 +1206,7 @@ bool AMRBNNVolumeActor::BuildRaymarchVolumeTexture()
 			SourceMax.Y = FMath::Clamp(ActiveMax.Y + Padding.Y, 0, LastSourceY);
 			SourceMax.Z = FMath::Clamp(ActiveMax.Z + Padding.Z, 0, LastSourceZ);
 
-			UE_LOG(LogTemp, Log, TEXT("MRBNN raymarch density bounds: min=(%d,%d,%d) max=(%d,%d,%d) active=%lld threshold=%.3f"),
+			UE_LOG(LogTemp, Log, TEXT("MRBNN compute density bounds: min=(%d,%d,%d) max=(%d,%d,%d) active=%lld threshold=%.3f"),
 				SourceMin.X, SourceMin.Y, SourceMin.Z,
 				SourceMax.X, SourceMax.Y, SourceMax.Z,
 				ActiveVoxelCount,
@@ -1121,10 +1238,13 @@ bool AMRBNNVolumeActor::BuildRaymarchVolumeTexture()
 					static_cast<int64>(Y) * TextureResolution +
 					X;
 				const float UnitX = (static_cast<float>(X) + 0.5f) / static_cast<float>(TextureResolution);
-				const FVector3f SourcePosition(
-					FMath::Lerp(static_cast<float>(SourceMin.X), static_cast<float>(SourceMax.X), UnitX),
-					FMath::Lerp(static_cast<float>(SourceMin.Y), static_cast<float>(SourceMax.Y), UnitY),
-					FMath::Lerp(static_cast<float>(SourceMin.Z), static_cast<float>(SourceMax.Z), UnitZ));
+				const FVector3f SourcePosition = MakeSourcePositionFromVolumeUnit(
+					UnitX,
+					UnitY,
+					UnitZ,
+					SourceMin,
+					SourceMax,
+					bUseMRBNNCloudAxisMapping);
 				const float RawDensity = SampleDensityTrilinear(DensityValues, VolumeResolution, SourcePosition);
 				float NormalizedDensity = 0.0f;
 				if (FMath::IsFinite(RawDensity))
@@ -1136,7 +1256,7 @@ bool AMRBNNVolumeActor::BuildRaymarchVolumeTexture()
 				const float EdgeDistance = FMath::Min(
 					FMath::Min(UnitX, 1.0f - UnitX),
 					FMath::Min(FMath::Min(UnitY, 1.0f - UnitY), FMath::Min(UnitZ, 1.0f - UnitZ)));
-				const float EdgeFade = Smooth01(EdgeDistance / 0.055f);
+				const float EdgeFade = Smooth01(EdgeDistance / 0.105f);
 				NormalizedDensity *= EdgeFade;
 
 				if (bBuildFeatureTexture)
@@ -1249,6 +1369,9 @@ FMRBNNComputeVolumeSettings AMRBNNVolumeActor::MakeComputeVolumeSettings() const
 	ComputeSettings.DirectShadowDensity = FMath::Max(RaymarchDirectShadowDensity, 0.0f);
 	ComputeSettings.PhaseG = FMath::Clamp(RaymarchPhaseG, -0.85f, 0.85f);
 	ComputeSettings.PhaseStrength = FMath::Clamp(RaymarchPhaseStrength, 0.0f, 1.0f);
+	ComputeSettings.EdgeSilverStrength = FMath::Clamp(RaymarchEdgeSilverStrength, 0.0f, 2.0f);
+	ComputeSettings.DeepShadowStrength = FMath::Clamp(RaymarchDeepShadowStrength, 0.0f, 2.0f);
+	ComputeSettings.PowderStrength = FMath::Clamp(RaymarchPowderStrength, 0.0f, 2.0f);
 	ComputeSettings.bUseBakedFeatures = bUseBakedFeatureLighting && RaymarchFeatureTexture;
 	ComputeSettings.BakedFeatureContribution = FMath::Clamp(RaymarchBakedFeatureContribution, 0.0f, 2.0f);
 	ComputeSettings.MultiScatterContribution = FMath::Clamp(RaymarchMultiScatterContribution, 0.0f, 2.0f);
@@ -1292,9 +1415,9 @@ bool AMRBNNVolumeActor::BuildComputeRenderDescForView(const FSceneView& View, FM
 
 	const FTransform ActorTransform = GetActorTransform();
 	const FVector CameraPosition = TransformWorldPositionToVolumeUnitBox(ActorTransform, VolumeExtent, View.ViewMatrices.GetViewOrigin());
-	const FVector CameraForward = TransformWorldVectorToVolumeUnitBox(ActorTransform, VolumeExtent, View.GetViewDirection(), FVector(1.0f, 0.0f, 0.0f));
-	const FVector CameraRight = TransformWorldVectorToVolumeUnitBox(ActorTransform, VolumeExtent, View.GetViewRight(), FVector(0.0f, 1.0f, 0.0f));
-	const FVector CameraUp = TransformWorldVectorToVolumeUnitBox(ActorTransform, VolumeExtent, View.GetViewUp(), FVector(0.0f, 0.0f, 1.0f));
+	const FVector CameraForward = TransformWorldVectorToVolumeUnitBoxUnnormalized(ActorTransform, VolumeExtent, View.GetViewDirection());
+	const FVector CameraRight = TransformWorldVectorToVolumeUnitBoxUnnormalized(ActorTransform, VolumeExtent, View.GetViewRight());
+	const FVector CameraUp = TransformWorldVectorToVolumeUnitBoxUnnormalized(ActorTransform, VolumeExtent, View.GetViewUp());
 	const FVector LightDirection = TransformWorldVectorToVolumeUnitBox(
 		ActorTransform,
 		VolumeExtent,
@@ -1338,195 +1461,8 @@ bool AMRBNNVolumeActor::ShouldUseSceneViewExtensionRenderPass() const
 
 bool AMRBNNVolumeActor::BuildDensityVolumePreview()
 {
-	if (!VolumeDensityVoxels)
-	{
-		return false;
-	}
-
-	VolumeDensityVoxels->ClearInstances();
 	bDensityPreviewBuilt = true;
-
-	if (!bShowDensityVolume || !MRBNNVolume)
-	{
-		VolumeDensityVoxels->SetVisibility(false, true);
-		return false;
-	}
-
-	UMRBNNBakedVolumeData* Data = MRBNNVolume->BakedData;
-	if (!Data)
-	{
-		FText DefaultDataError;
-		Data = UMRBNNProjectSettings::Get()->CreateTransientDefaultBakedData(this, DefaultDataError);
-		MRBNNVolume->BakedData = Data;
-	}
-	if (!Data)
-	{
-		VolumeDensityVoxels->SetVisibility(false, true);
-		return false;
-	}
-
-	FText Error;
-	FString WorkingDirectory;
-	FString RepositoryRoot;
-	if (!Data->ResolvePaths(WorkingDirectory, RepositoryRoot, Error))
-	{
-		UE_LOG(LogTemp, Warning, TEXT("MRBNN density preview could not resolve data paths: %s"), *Error.ToString());
-		VolumeDensityVoxels->SetVisibility(false, true);
-		return false;
-	}
-
-	TSharedPtr<FJsonObject> Config;
-	if (!ReadJsonObject(FPaths::Combine(WorkingDirectory, TEXT("config.json")), Config))
-	{
-		UE_LOG(LogTemp, Warning, TEXT("MRBNN density preview could not read config.json."));
-		VolumeDensityVoxels->SetVisibility(false, true);
-		return false;
-	}
-
-	const TSharedPtr<FJsonObject>* VolumeObject = nullptr;
-	if (!Config->TryGetObjectField(TEXT("volume"), VolumeObject) || !VolumeObject || !VolumeObject->IsValid())
-	{
-		UE_LOG(LogTemp, Warning, TEXT("MRBNN density preview config has no volume object."));
-		VolumeDensityVoxels->SetVisibility(false, true);
-		return false;
-	}
-
-	FString VolumePath;
-	if (!(*VolumeObject)->TryGetStringField(TEXT("path"), VolumePath) || VolumePath.IsEmpty())
-	{
-		UE_LOG(LogTemp, Warning, TEXT("MRBNN density preview config has no volume path."));
-		VolumeDensityVoxels->SetVisibility(false, true);
-		return false;
-	}
-
-	FIntVector VolumeResolution(257, 257, 257);
-	const TArray<TSharedPtr<FJsonValue>>* ResolutionArray = nullptr;
-	if ((*VolumeObject)->TryGetArrayField(TEXT("resolution"), ResolutionArray))
-	{
-		ReadIntArray3(ResolutionArray, VolumeResolution);
-	}
-
-	int32 SkipByteCount = 0;
-	(*VolumeObject)->TryGetNumberField(TEXT("skip_byte_num"), SkipByteCount);
-
-	FString ResolvedVolumePath = VolumePath;
-	FPaths::NormalizeFilename(ResolvedVolumePath);
-	if (FPaths::IsRelative(ResolvedVolumePath))
-	{
-		ResolvedVolumePath = FPaths::Combine(RepositoryRoot, ResolvedVolumePath);
-	}
-	FPaths::CollapseRelativeDirectories(ResolvedVolumePath);
-
-	TArray<uint8> RawBytes;
-	if (!FFileHelper::LoadFileToArray(RawBytes, *ResolvedVolumePath))
-	{
-		UE_LOG(LogTemp, Warning, TEXT("MRBNN density preview could not read volume file: %s"), *ResolvedVolumePath);
-		VolumeDensityVoxels->SetVisibility(false, true);
-		return false;
-	}
-
-	const int64 VoxelCount = static_cast<int64>(VolumeResolution.X) * VolumeResolution.Y * VolumeResolution.Z;
-	if (RawBytes.Num() < SkipByteCount + VoxelCount * static_cast<int64>(sizeof(float)))
-	{
-		UE_LOG(LogTemp, Warning, TEXT("MRBNN density preview volume file is smaller than config resolution requires."));
-		VolumeDensityVoxels->SetVisibility(false, true);
-		return false;
-	}
-
-	const float* DensityValues = reinterpret_cast<const float*>(RawBytes.GetData() + SkipByteCount);
-	const int32 SafeSampleResolution = FMath::Clamp(DensitySampleResolution, 8, 96);
-	const int32 SafeMaxInstances = FMath::Clamp(MaxDensityVoxelInstances, 1, 20000);
-	TArray<FMRBNNDensityVoxelCandidate> Candidates;
-	Candidates.Reserve(SafeMaxInstances * 4);
-
-	const FVector SafeExtent(
-		FMath::Max(VolumeExtent.X, 1.0f),
-		FMath::Max(VolumeExtent.Y, 1.0f),
-		FMath::Max(VolumeExtent.Z, 1.0f));
-	const FVector CellSize = SafeExtent * 2.0f / static_cast<float>(SafeSampleResolution);
-
-	for (int32 Z = 0; Z < SafeSampleResolution; ++Z)
-	{
-		const int32 SourceZ = FMath::Clamp(FMath::RoundToInt((static_cast<float>(Z) + 0.5f) / SafeSampleResolution * (VolumeResolution.Z - 1)), 0, VolumeResolution.Z - 1);
-		for (int32 Y = 0; Y < SafeSampleResolution; ++Y)
-		{
-			const int32 SourceY = FMath::Clamp(FMath::RoundToInt((static_cast<float>(Y) + 0.5f) / SafeSampleResolution * (VolumeResolution.Y - 1)), 0, VolumeResolution.Y - 1);
-			for (int32 X = 0; X < SafeSampleResolution; ++X)
-			{
-				const int32 SourceX = FMath::Clamp(FMath::RoundToInt((static_cast<float>(X) + 0.5f) / SafeSampleResolution * (VolumeResolution.X - 1)), 0, VolumeResolution.X - 1);
-				const int64 SourceIndex =
-					static_cast<int64>(SourceZ) * VolumeResolution.X * VolumeResolution.Y +
-					static_cast<int64>(SourceY) * VolumeResolution.X +
-					SourceX;
-				const float Density = DensityValues[SourceIndex];
-				if (!FMath::IsFinite(Density) || Density < DensityThreshold)
-				{
-					continue;
-				}
-
-				FMRBNNDensityVoxelCandidate Candidate;
-				Candidate.Density = Density;
-				Candidate.LocalPosition = FVector(
-					(static_cast<float>(X) + 0.5f) / SafeSampleResolution * SafeExtent.X * 2.0f - SafeExtent.X,
-					(static_cast<float>(Y) + 0.5f) / SafeSampleResolution * SafeExtent.Y * 2.0f - SafeExtent.Y,
-					(static_cast<float>(Z) + 0.5f) / SafeSampleResolution * SafeExtent.Z * 2.0f - SafeExtent.Z);
-				Candidates.Add(Candidate);
-			}
-		}
-	}
-
-	if (Candidates.IsEmpty())
-	{
-		VolumeDensityVoxels->SetVisibility(false, true);
-		return false;
-	}
-
-	if (bFitDensityPreviewToBounds)
-	{
-		FBox DensityBounds(ForceInit);
-		for (const FMRBNNDensityVoxelCandidate& Candidate : Candidates)
-		{
-			DensityBounds += Candidate.LocalPosition;
-		}
-
-		const FVector SourceSize = DensityBounds.GetSize();
-		const FVector SourceCenter = DensityBounds.GetCenter();
-		const FVector TargetSize = SafeExtent * 2.0f * FMath::Clamp(DensityBoundsFill, 0.1f, 1.0f);
-		const FVector FitScale(
-			SourceSize.X > KINDA_SMALL_NUMBER ? TargetSize.X / SourceSize.X : 1.0f,
-			SourceSize.Y > KINDA_SMALL_NUMBER ? TargetSize.Y / SourceSize.Y : 1.0f,
-			SourceSize.Z > KINDA_SMALL_NUMBER ? TargetSize.Z / SourceSize.Z : 1.0f);
-
-		for (FMRBNNDensityVoxelCandidate& Candidate : Candidates)
-		{
-			Candidate.LocalPosition = (Candidate.LocalPosition - SourceCenter) * FitScale;
-		}
-	}
-
-	TArray<FMRBNNDensityVoxelCandidate> ThinnedCandidates;
-	const TArray<FMRBNNDensityVoxelCandidate>* InstanceCandidates = &Candidates;
-	if (Candidates.Num() > SafeMaxInstances)
-	{
-		ThinnedCandidates.Reserve(SafeMaxInstances);
-		const float Step = static_cast<float>(Candidates.Num()) / static_cast<float>(SafeMaxInstances);
-		for (int32 Index = 0; Index < SafeMaxInstances; ++Index)
-		{
-			const int32 SourceIndex = FMath::Clamp(FMath::FloorToInt((static_cast<float>(Index) + 0.5f) * Step), 0, Candidates.Num() - 1);
-			ThinnedCandidates.Add(Candidates[SourceIndex]);
-		}
-		InstanceCandidates = &ThinnedCandidates;
-	}
-
-	const int32 InstanceCount = InstanceCandidates->Num();
-	const float VoxelWorldSize = FMath::Max3(CellSize.X, CellSize.Y, CellSize.Z) * FMath::Max(DensityVoxelScale, 0.1f);
-	const FVector VoxelScale(VoxelWorldSize / 100.0f);
-	for (int32 Index = 0; Index < InstanceCount; ++Index)
-	{
-		VolumeDensityVoxels->AddInstance(FTransform(FRotator::ZeroRotator, (*InstanceCandidates)[Index].LocalPosition, VoxelScale));
-	}
-
-	VolumeDensityVoxels->SetVisibility(InstanceCount > 0, true);
-	return InstanceCount > 0;
+	return false;
 }
 
 void AMRBNNVolumeActor::UpdateRelightFromDirectionalLight()
@@ -1536,10 +1472,47 @@ void AMRBNNVolumeActor::UpdateRelightFromDirectionalLight()
 		return;
 	}
 
+	auto ApplyRelightState = [this](const FVector& LocalLightDirection, const FLinearColor& SourceLightColor, float DirectLightIntensity)
+	{
+		const FLinearColor SanitizedColor(
+			FMath::Max(SourceLightColor.R, 0.0f),
+			FMath::Max(SourceLightColor.G, 0.0f),
+			FMath::Max(SourceLightColor.B, 0.0f),
+			1.0f);
+		const float SafeIntensity = FMath::Max(DirectLightIntensity, 0.0f);
+		const bool bChanged =
+			!bHasLastRelightState ||
+			FVector::DistSquared(LastRelightDirection, LocalLightDirection) > 0.0001 ||
+			FMath::Abs(LastRelightColor.R - SanitizedColor.R) > 0.001f ||
+			FMath::Abs(LastRelightColor.G - SanitizedColor.G) > 0.001f ||
+			FMath::Abs(LastRelightColor.B - SanitizedColor.B) > 0.001f ||
+			FMath::Abs(LastRelightIntensity - SafeIntensity) > 0.001f;
+
+		if (bChanged && bHasLastRelightState)
+		{
+			ResetRenderState();
+		}
+
+		LastRelightDirection = LocalLightDirection;
+		LastRelightColor = SanitizedColor;
+		LastRelightIntensity = SafeIntensity;
+		bHasLastRelightState = true;
+
+		CurrentRaymarchDirectLightColor = SanitizedColor;
+		CurrentRaymarchDirectLightIntensity = SafeIntensity;
+		MRBNNVolume->RenderSettings.LightDirection = LocalLightDirection;
+
+		const float LightColorScale = FMath::Clamp(0.35f + SafeIntensity * 1.65f, 0.0f, 8.0f);
+		MRBNNVolume->RenderSettings.LightColor = FLinearColor(
+			FMath::Max(SanitizedColor.R, 0.04f) * LightColorScale,
+			FMath::Max(SanitizedColor.G, 0.04f) * LightColorScale,
+			FMath::Max(SanitizedColor.B, 0.04f) * LightColorScale,
+			1.0f);
+	};
+
 	if (!bUseDirectionalLightForRelight)
 	{
-		CurrentRaymarchDirectLightColor = FLinearColor::White;
-		CurrentRaymarchDirectLightIntensity = FMath::Max(RaymarchDirectLightIntensityScale, 0.0f);
+		ApplyRelightState(FVector(0.35f, 0.7f, 0.62f).GetSafeNormal(), FLinearColor::White, RaymarchDirectLightIntensityScale);
 		return;
 	}
 
@@ -1555,14 +1528,12 @@ void AMRBNNVolumeActor::UpdateRelightFromDirectionalLight()
 
 	if (!LightActor)
 	{
-		CurrentRaymarchDirectLightColor = FLinearColor::White;
-		CurrentRaymarchDirectLightIntensity = 0.0f;
+		ApplyRelightState(FVector(0.35f, 0.7f, 0.62f).GetSafeNormal(), FLinearColor::White, 0.0f);
 		return;
 	}
 
 	const FVector WorldLightDirection = (-LightActor->GetActorForwardVector()).GetSafeNormal();
 	const FVector LocalLightDirection = GetActorTransform().InverseTransformVectorNoScale(WorldLightDirection).GetSafeNormal();
-	MRBNNVolume->RenderSettings.LightDirection = LocalLightDirection;
 
 	FLinearColor LightColor = LightActor->GetLightColor();
 	float DirectLightIntensity = FMath::Max(RaymarchDirectLightIntensityScale, 0.0f);
@@ -1571,118 +1542,12 @@ void AMRBNNVolumeActor::UpdateRelightFromDirectionalLight()
 		LightColor = DirectionalComponent->GetLightColor();
 		DirectLightIntensity = FMath::Clamp(DirectionalComponent->Intensity / 5.0f, 0.0f, 16.0f) * FMath::Max(RaymarchDirectLightIntensityScale, 0.0f);
 	}
-	CurrentRaymarchDirectLightColor = FLinearColor(
-		FMath::Max(LightColor.R, 0.0f),
-		FMath::Max(LightColor.G, 0.0f),
-		FMath::Max(LightColor.B, 0.0f),
-		1.0f);
-	CurrentRaymarchDirectLightIntensity = DirectLightIntensity;
-	MRBNNVolume->RenderSettings.LightColor = FLinearColor(
-		FMath::Max(LightColor.R, 0.05f) * FMath::Max(DirectLightIntensity, 0.05f) * 2.2f,
-		FMath::Max(LightColor.G, 0.05f) * FMath::Max(DirectLightIntensity, 0.05f) * 2.2f,
-		FMath::Max(LightColor.B, 0.05f) * FMath::Max(DirectLightIntensity, 0.05f) * 2.2f,
-		1.0f);
+	ApplyRelightState(LocalLightDirection, LightColor, DirectLightIntensity);
 }
 
 void AMRBNNVolumeActor::UpdateVolumeMaterial()
 {
-	if (!VolumeSlices || !VolumeBillboard)
-	{
-		return;
-	}
-
-	UMaterialInterface* BaseMaterial = nullptr;
-	if (!BillboardMaterialInstance || !VolumeMaterialInstance || (!DensityVoxelMaterialInstance && VolumeDensityVoxels))
-	{
-		BaseMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/EngineMaterials/Widget3DPassThrough_Translucent_OneSided.Widget3DPassThrough_Translucent_OneSided"));
-		if (!BaseMaterial)
-		{
-			BaseMaterial = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/EngineMaterials/Widget3DPassThrough_Opaque_OneSided.Widget3DPassThrough_Opaque_OneSided"));
-		}
-	}
-
-	if (!BillboardMaterialInstance && BaseMaterial)
-	{
-		BillboardMaterialInstance = UMaterialInstanceDynamic::Create(BaseMaterial, this);
-		VolumeBillboard->SetMaterial(0, BillboardMaterialInstance);
-	}
-
-	if (!VolumeMaterialInstance && BaseMaterial)
-	{
-		VolumeMaterialInstance = UMaterialInstanceDynamic::Create(BaseMaterial, this);
-		VolumeSlices->SetMaterial(0, VolumeMaterialInstance);
-	}
-
-	if (!DensityVoxelMaterialInstance && BaseMaterial && VolumeDensityVoxels)
-	{
-		DensityVoxelMaterialInstance = UMaterialInstanceDynamic::Create(BaseMaterial, this);
-		VolumeDensityVoxels->SetMaterial(0, DensityVoxelMaterialInstance);
-	}
-
-	if (!BillboardMaterialInstance && !VolumeMaterialInstance && !DensityVoxelMaterialInstance)
-	{
-		return;
-	}
-
-	UTexture* PreviewTexture = GetPreviewTexture();
-	const bool bHasLiveRender = HasRenderedPreviewTexture();
-	const bool bCanShowFallback = bUseFallbackPreviewBeforeRender && PreviewTexture && !bHasLiveRender;
-	const bool bCanShowPreview = PreviewTexture && (!bHideSlicesUntilFirstRender || bHasLiveRender || bCanShowFallback);
-	const bool bCanShowBillboard = bShowVolumeBillboard && bCanShowPreview;
-	const bool bCanShowSlices = bUseExperimentalSliceStack && bCanShowPreview;
-	VolumeBillboard->SetVisibility(bCanShowBillboard, true);
-	VolumeSlices->SetVisibility(bCanShowSlices, true);
-	if (VolumeDensityVoxels)
-	{
-		VolumeDensityVoxels->SetVisibility(bShowDensityVolume && VolumeDensityVoxels->GetInstanceCount() > 0, true);
-	}
-	if (!bCanShowPreview && !DensityVoxelMaterialInstance)
-	{
-		UpdateRaymarchMaterial();
-		return;
-	}
-
-	if (PreviewTexture)
-	{
-		PreviewTexture->Filter = TF_Bilinear;
-	}
-
-	ADirectionalLight* LightForMaterial = DirectionalLightActor;
-	if (!LightForMaterial && bAutoFindDirectionalLight)
-	{
-		LightForMaterial = FindDirectionalLight();
-	}
-
-	const FVector WorldLightDirection = bUseDirectionalLightForRelight && LightForMaterial
-		? (-LightForMaterial->GetActorForwardVector()).GetSafeNormal()
-		: GetActorForwardVector();
-	const float Facing = FMath::Clamp(FVector::DotProduct(GetActorForwardVector(), WorldLightDirection), 0.0f, 1.0f);
-	const float RelitBrightness = PreviewBrightness * (AmbientRelight + Facing * DirectionalRelight);
-	const float SafeOpacity = FMath::Clamp(SliceOpacity, 0.0f, 1.0f);
-	if (BillboardMaterialInstance && PreviewTexture)
-	{
-		BillboardMaterialInstance->SetTextureParameterValue(TEXT("SlateUI"), PreviewTexture);
-		BillboardMaterialInstance->SetVectorParameterValue(TEXT("TintColorAndOpacity"), FLinearColor(RelitBrightness, RelitBrightness, RelitBrightness, 1.0f));
-		BillboardMaterialInstance->SetScalarParameterValue(TEXT("OpacityFromTexture"), 1.0f);
-	}
-	if (VolumeMaterialInstance && PreviewTexture)
-	{
-		VolumeMaterialInstance->SetTextureParameterValue(TEXT("SlateUI"), PreviewTexture);
-		VolumeMaterialInstance->SetVectorParameterValue(TEXT("TintColorAndOpacity"), FLinearColor(RelitBrightness, RelitBrightness, RelitBrightness, SafeOpacity));
-		VolumeMaterialInstance->SetScalarParameterValue(TEXT("OpacityFromTexture"), 1.0f);
-	}
-	if (DensityVoxelMaterialInstance)
-	{
-		UTexture* WhiteTexture = LoadObject<UTexture>(nullptr, TEXT("/Engine/EngineResources/WhiteSquareTexture.WhiteSquareTexture"));
-		if (WhiteTexture)
-		{
-			DensityVoxelMaterialInstance->SetTextureParameterValue(TEXT("SlateUI"), WhiteTexture);
-		}
-		DensityVoxelMaterialInstance->SetVectorParameterValue(TEXT("TintColorAndOpacity"), FLinearColor(RelitBrightness, RelitBrightness, RelitBrightness, FMath::Clamp(DensityVoxelOpacity, 0.0f, 1.0f)));
-		DensityVoxelMaterialInstance->SetScalarParameterValue(TEXT("OpacityFromTexture"), 1.0f);
-	}
-
-	UpdateRaymarchMaterial();
+	// The actor renders through the RDG compute composite path; no preview mesh materials are maintained.
 }
 
 void AMRBNNVolumeActor::UpdateRaymarchMaterial()
@@ -1693,38 +1558,7 @@ void AMRBNNVolumeActor::UpdateRaymarchMaterial()
 
 void AMRBNNVolumeActor::UpdateDebugText()
 {
-	if (!DebugText)
-	{
-		return;
-	}
-
-	DebugText->SetVisibility(bShowDebugText, true);
-	if (!bShowDebugText)
-	{
-		return;
-	}
-
-	FString Summary = TEXT("MRBNN Volume\nRenderer: not initialized");
-	if (MRBNNVolume)
-	{
-		Summary = FString::Printf(
-			TEXT("MRBNN Volume\nPreview=%s  Display=%s  Compute=%s  Pass=%s  VolumeTex=%s %d^3/%d steps  Features=%s  Voxels=%d\nExtent=(%.0f %.0f %.0f)\n%s\nLastError: %s"),
-			HasRenderedPreviewTexture() ? TEXT("live") : TEXT("fallback"),
-			bUseComputeGlobalShader ? TEXT("compute output") : (bUseRaymarchShader ? TEXT("volume material") : (bShowDensityVolume ? TEXT("density voxels") : (bUseExperimentalSliceStack ? TEXT("experimental slices") : TEXT("billboard")))),
-			bUseComputeGlobalShader ? TEXT("global shader") : TEXT("off"),
-			ShouldUseSceneViewExtensionRenderPass() ? TEXT("SceneViewExtension") : TEXT("manual"),
-			RaymarchDensityTexture ? TEXT("ready") : TEXT("missing"),
-			RaymarchDensityTexture ? RaymarchDensityTexture->GetSizeX() : 0,
-			FMath::Clamp(RaymarchStepCount, 4, 96),
-			RaymarchFeatureTexture ? TEXT("baked proxy") : TEXT("off"),
-			VolumeDensityVoxels ? VolumeDensityVoxels->GetInstanceCount() : 0,
-			VolumeExtent.X,
-			VolumeExtent.Y,
-			VolumeExtent.Z,
-			*MRBNNVolume->GetDebugSummary(),
-			*MRBNNVolume->GetLastError().ToString());
-	}
-	DebugText->SetText(FText::FromString(Summary));
+	// Runtime status is exposed through actor Details and the MRBNNVolume component debug fields.
 }
 
 void AMRBNNVolumeActor::MaybeRenderEditorPreviewOnce()
@@ -1775,50 +1609,4 @@ ADirectionalLight* AMRBNNVolumeActor::FindDirectionalLight() const
 	}
 
 	return nullptr;
-}
-
-UTexture* AMRBNNVolumeActor::GetPreviewTexture()
-{
-	if (HasRenderedPreviewTexture())
-	{
-		return Cast<UTexture>(MRBNNVolume->GetOutputRenderTarget());
-	}
-
-	return bUseFallbackPreviewBeforeRender ? LoadFallbackPreviewTexture() : nullptr;
-}
-
-UTexture* AMRBNNVolumeActor::LoadFallbackPreviewTexture()
-{
-	if (FallbackPreviewTexture)
-	{
-		return FallbackPreviewTexture;
-	}
-
-	const FString PreviewPath = FindFallbackPreviewPath();
-	if (PreviewPath.IsEmpty() || !FPaths::FileExists(PreviewPath))
-	{
-		return nullptr;
-	}
-
-	FallbackPreviewTexture = FImageUtils::ImportFileAsTexture2D(PreviewPath);
-	if (FallbackPreviewTexture)
-	{
-		FallbackPreviewTexture->Filter = TF_Bilinear;
-	}
-	return FallbackPreviewTexture;
-}
-
-FString AMRBNNVolumeActor::FindFallbackPreviewPath() const
-{
-	if (const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("MRBNN")))
-	{
-		const FString PluginBaseDir = Plugin->GetBaseDir();
-		const FString PreviewPath = FPaths::Combine(PluginBaseDir, TEXT("Binaries/ThirdParty/MRBNNBridge/Win64/MRBNNBridgeSmokeTestPreview.png"));
-		if (FPaths::FileExists(PreviewPath))
-		{
-			return PreviewPath;
-		}
-	}
-
-	return FString();
 }

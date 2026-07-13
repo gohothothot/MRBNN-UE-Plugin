@@ -32,6 +32,9 @@ float DirectLightIntensity;
 float DirectShadowDensity;
 float PhaseG;
 float PhaseStrength;
+float EdgeSilverStrength;
+float DeepShadowStrength;
+float PowderStrength;
 float BakedFeatureContribution;
 float MultiScatterContribution;
 float FeatureAlbedoBlend;
@@ -101,25 +104,23 @@ float EstimateLightVisibility(float3 p, float3 lightDir)
 
 float3 DecodeFeatureLighting(float4 feature, float density, float phase)
 {
-	if (bUseBakedFeatures == 0)
-	{
-		return 0.0f;
-	}
-
+	float enabled = bUseBakedFeatures != 0 ? 1.0f : 0.0f;
 	float baseEnergy = feature.r;
 	float multiScatter = feature.g;
 	float anisotropy = feature.b;
 	float confidence = max(feature.a, density);
 	float featureLift = baseEnergy * BakedFeatureContribution + multiScatter * MultiScatterContribution;
-	float warmScatter = saturate(featureLift * confidence);
-	float directionalMemory = lerp(1.0f, 1.0f + anisotropy * 1.8f, PhaseStrength) * phase;
-	return BakedFeatureTint.rgb * warmScatter * directionalMemory;
+	float warmScatter = saturate(featureLift * (0.5f + confidence * 0.85f));
+	float directionalMemory = lerp(1.0f, 1.0f + anisotropy * 1.55f, PhaseStrength) * phase;
+	float softInteriorLift = lerp(0.75f, 1.08f, confidence);
+	return BakedFeatureTint.rgb * warmScatter * directionalMemory * softInteriorLift * enabled;
 }
 
 [numthreads(8, 8, 1)]
 void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 {
-	if (DispatchThreadId.x >= OutputSize.x || DispatchThreadId.y >= OutputSize.y)
+	uint2 outputSizeU = uint2(max(OutputSize, int2(0, 0)));
+	if (DispatchThreadId.x >= outputSizeU.x || DispatchThreadId.y >= outputSizeU.y)
 	{
 		return;
 	}
@@ -135,10 +136,11 @@ void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	{
 		camera = CameraPosition;
 		float2 safeTanHalfFov = max(TanHalfFov, 0.001f);
-		rayDir = normalize(
-			normalize(CameraForward) +
-			normalize(CameraRight) * ndc.x * safeTanHalfFov.x +
-			normalize(CameraUp) * ndc.y * safeTanHalfFov.y);
+		float3 volumeRay =
+			CameraForward +
+			CameraRight * ndc.x * safeTanHalfFov.x +
+			CameraUp * ndc.y * safeTanHalfFov.y;
+		rayDir = dot(volumeRay, volumeRay) > 1.0e-8f ? normalize(volumeRay) : float3(1.0f, 0.0f, 0.0f);
 	}
 	else if (length(camera) < 1.25f)
 	{
@@ -190,12 +192,23 @@ void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 		float density = SampleDensity(p);
 		if (density > 0.001f)
 		{
-			float4 feature = SampleFeature(p);
+			float4 feature = bUseBakedFeatures != 0 ? SampleFeature(p) : float4(0.0f, 0.0f, 0.0f, density);
 			float visibility = EstimateLightVisibility(p, lightDir);
 			float3 baseAlbedo = lerp(CloudColor.rgb, Albedo.rgb, FeatureAlbedoBlend);
-			float direct = Directional * DirectLightIntensity * visibility * phaseNormalized;
-			float3 lighting = baseAlbedo * LightColor.rgb * (Ambient + direct);
-			lighting += DecodeFeatureLighting(feature, density, phaseNormalized);
+			float featureConfidence = saturate(max(feature.a, density));
+			float pathDepth = saturate(1.0f - transmittance);
+			float deepOcclusion = saturate(pathDepth * DeepShadowStrength * (0.6f + density * 1.4f));
+			float powder = 1.0f - exp(-density * 8.0f);
+			float ambientOcclusion = lerp(1.0f, 0.58f + featureConfidence * 0.22f, deepOcclusion);
+			float directOcclusion = lerp(1.0f, 0.50f + powder * 0.65f, deepOcclusion * saturate(PowderStrength));
+			float direct = Directional * DirectLightIntensity * visibility * phaseNormalized * directOcclusion;
+			float3 lighting = baseAlbedo * LightColor.rgb * (Ambient * ambientOcclusion + direct);
+			float edgeMask = saturate((1.0f - density * 1.15f) * transmittance * 1.35f);
+			float silverPhase = saturate((phaseNormalized - 0.75f) * 0.35f);
+			float silver = EdgeSilverStrength * edgeMask * visibility * silverPhase * (0.35f + 0.65f * powder);
+			lighting += LightColor.rgb * BakedFeatureTint.rgb * silver;
+			float3 featureLighting = DecodeFeatureLighting(feature, density, phaseNormalized);
+			lighting += featureLighting * LightColor.rgb * (0.35f + 0.65f * visibility);
 
 			float alpha = 1.0f - exp(-density * max(Opacity, 0.0f) * dt * 70.0f);
 			alpha = saturate(alpha);
@@ -210,7 +223,8 @@ void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	}
 
 	float cloudAlpha = saturate(1.0f - transmittance);
-	float3 color = bCompositeOutput != 0 ? radiance * Brightness : radiance * Brightness + sky * transmittance;
+	float3 straightCloudColor = cloudAlpha > 1.0e-4f ? radiance / cloudAlpha : 0.0f;
+	float3 color = bCompositeOutput != 0 ? straightCloudColor * Brightness : radiance * Brightness + sky * transmittance;
 	color = max(color, 0.0f);
 	color = color * (2.51f * color + 0.03f) / max(color * (2.43f * color + 0.59f) + 0.14f, 1.0e-3f);
 	OutputTexture[DispatchThreadId.xy] = float4(saturate(color), bCompositeOutput != 0 ? cloudAlpha : 1.0f);
@@ -218,15 +232,22 @@ void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 
 Texture2D<float4> SceneColorTexture;
 Texture2D<float4> CloudTexture;
+Texture2D<float4> BackCloudTexture;
+Texture2D<float4> FrontCloudTexture;
+Texture2D<float4> DebugTexture;
 SamplerState CompositeSampler;
 RWTexture2D<float4> CompositeOutputTexture;
 int2 CompositeOutputSize;
 float CompositeStrength;
+int DebugDisplayMode;
+float DebugPreviewOpacity;
+float DebugOverlayScale;
 
 [numthreads(8, 8, 1)]
 void MainCompositeCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 {
-	if (DispatchThreadId.x >= CompositeOutputSize.x || DispatchThreadId.y >= CompositeOutputSize.y)
+	uint2 compositeOutputSizeU = uint2(max(CompositeOutputSize, int2(0, 0)));
+	if (DispatchThreadId.x >= compositeOutputSizeU.x || DispatchThreadId.y >= compositeOutputSizeU.y)
 	{
 		return;
 	}
@@ -236,4 +257,61 @@ void MainCompositeCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	float4 cloud = CloudTexture.SampleLevel(CompositeSampler, uv, 0);
 	float alpha = saturate(cloud.a * CompositeStrength);
 	CompositeOutputTexture[DispatchThreadId.xy] = float4(lerp(sceneColor.rgb, cloud.rgb, alpha), sceneColor.a);
+}
+
+[numthreads(8, 8, 1)]
+void MainCloudOverCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	uint2 compositeOutputSizeU = uint2(max(CompositeOutputSize, int2(0, 0)));
+	if (DispatchThreadId.x >= compositeOutputSizeU.x || DispatchThreadId.y >= compositeOutputSizeU.y)
+	{
+		return;
+	}
+
+	float2 uv = (float2(DispatchThreadId.xy) + 0.5f) / max(float2(CompositeOutputSize), 1.0f);
+	float4 backCloud = BackCloudTexture.SampleLevel(CompositeSampler, uv, 0);
+	float4 frontCloud = FrontCloudTexture.SampleLevel(CompositeSampler, uv, 0);
+	float frontAlpha = saturate(frontCloud.a);
+	float backAlpha = saturate(backCloud.a);
+	float outAlpha = saturate(frontAlpha + backAlpha * (1.0f - frontAlpha));
+	float3 weightedColor = frontCloud.rgb * frontAlpha + backCloud.rgb * backAlpha * (1.0f - frontAlpha);
+	float3 outColor = outAlpha > 1.0e-4f ? weightedColor / outAlpha : 0.0f;
+	CompositeOutputTexture[DispatchThreadId.xy] = float4(saturate(outColor), outAlpha);
+}
+
+[numthreads(8, 8, 1)]
+void MainDebugViewCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	uint2 compositeOutputSizeU = uint2(max(CompositeOutputSize, int2(0, 0)));
+	if (DispatchThreadId.x >= compositeOutputSizeU.x || DispatchThreadId.y >= compositeOutputSizeU.y)
+	{
+		return;
+	}
+
+	float2 uv = (float2(DispatchThreadId.xy) + 0.5f) / max(float2(CompositeOutputSize), 1.0f);
+	float4 sceneColor = SceneColorTexture.SampleLevel(CompositeSampler, uv, 0);
+	float opacity = saturate(DebugPreviewOpacity);
+	float3 outputColor = sceneColor.rgb;
+
+	if (DebugDisplayMode == 1)
+	{
+		float4 debugValue = DebugTexture.SampleLevel(CompositeSampler, uv, 0);
+		outputColor = lerp(sceneColor.rgb, debugValue.rgb, opacity);
+	}
+	else if (DebugDisplayMode == 2)
+	{
+		float scale = clamp(DebugOverlayScale, 0.1f, 1.0f);
+		float aspect = (float)CompositeOutputSize.x / max((float)CompositeOutputSize.y, 1.0f);
+		float2 overlaySize = float2(scale, scale * aspect);
+		float2 overlayMin = float2(1.0f - overlaySize.x - 0.025f, 0.025f);
+		float2 overlayMax = overlayMin + overlaySize;
+		if (all(uv >= overlayMin) && all(uv <= overlayMax))
+		{
+			float2 debugUv = saturate((uv - overlayMin) / max(overlaySize, 1.0e-4f));
+			float4 debugValue = DebugTexture.SampleLevel(CompositeSampler, debugUv, 0);
+			outputColor = lerp(sceneColor.rgb, debugValue.rgb, opacity);
+		}
+	}
+
+	CompositeOutputTexture[DispatchThreadId.xy] = float4(outputColor, sceneColor.a);
 }

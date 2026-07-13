@@ -1,7 +1,7 @@
 #include "MRBNNProjectSettings.h"
 
 #include "MRBNNBakedVolumeData.h"
-#include "MRBNNVolumeComponent.h"
+#include "Engine/TextureRenderTarget2D.h"
 #include "Interfaces/IPluginManager.h"
 #include "Misc/Paths.h"
 
@@ -50,16 +50,16 @@ UMRBNNProjectSettings::UMRBNNProjectSettings()
 	DefaultSceneName = TEXT("cloud-03");
 	DefaultSkyboxHDRI.FilePath = TEXT("$(PluginDir)/Data/qwantani_sunset_puresky_4k.hdr");
 	BakeDestinationRepositoryRoot.Path = TEXT("$(PluginDir)");
-
-	DefaultRenderSettings.LightColor = FLinearColor(2.2f, 2.2f, 2.2f, 1.0f);
-	DefaultRenderSettings.bFastDirectIllumination = true;
-	DefaultRenderSettings.bEnableSkybox = false;
-	DefaultRenderSettings.bEnableSkyboxBaking = false;
 }
 
 const UMRBNNProjectSettings* UMRBNNProjectSettings::Get()
 {
 	return GetDefault<UMRBNNProjectSettings>();
+}
+
+UMRBNNProjectSettings* UMRBNNProjectSettings::GetMutable()
+{
+	return GetMutableDefault<UMRBNNProjectSettings>();
 }
 
 FName UMRBNNProjectSettings::GetCategoryName() const
@@ -151,17 +151,35 @@ bool UMRBNNProjectSettings::ResolveDefaultDataSet(FString& OutRepositoryRoot, FS
 	return true;
 }
 
-void UMRBNNProjectSettings::ApplyRealtimePreset(UMRBNNVolumeComponent& Component) const
+void UMRBNNProjectSettings::EnsureSceneViewDebugPreviewRenderTarget(FIntPoint OutputSize)
 {
-	Component.OutputWidth = FMath::Max(RealtimeOutputWidth, 1);
-	Component.OutputHeight = FMath::Max(RealtimeOutputHeight, 1);
-	Component.SamplesPerRender = FMath::Max(RealtimeSamplesPerRender, 1);
-	Component.bAccumulateFrames = bRealtimeAccumulateFrames;
-	Component.MaxAccumulatedFrames = FMath::Max(RealtimeMaxAccumulatedFrames, 1);
-	Component.SpatialDenoisePasses = FMath::Clamp(RealtimeSpatialDenoisePasses, 0, 4);
-	Component.RenderSettings = DefaultRenderSettings;
-	Component.RenderSettings.bFastDirectIllumination = bRealtimeFastDirectIllumination;
-	Component.RenderSettings.bEnableSkybox = bEnableDefaultSkybox;
-	Component.RenderSettings.bEnableSkyboxBaking = bEnableDefaultSkyboxBaking;
-	Component.ResetProgressiveAccumulation();
+	OutputSize.X = FMath::Max(OutputSize.X, 1);
+	OutputSize.Y = FMath::Max(OutputSize.Y, 1);
+
+	if (!SceneViewDebugPreviewRenderTarget)
+	{
+		SceneViewDebugPreviewRenderTarget = NewObject<UTextureRenderTarget2D>(this, TEXT("MRBNN_ProjectSceneViewDebugRT"), RF_Transient);
+		SceneViewDebugPreviewRenderTarget->ClearColor = FLinearColor::Transparent;
+		SceneViewDebugPreviewRenderTarget->bAutoGenerateMips = false;
+		SceneViewDebugPreviewRenderTarget->Filter = TF_Bilinear;
+		SceneViewDebugPreviewRenderTarget->InitCustomFormat(OutputSize.X, OutputSize.Y, PF_FloatRGBA, false);
+		SceneViewDebugPreviewRenderTarget->UpdateResourceImmediate(true);
+		return;
+	}
+
+	if (SceneViewDebugPreviewRenderTarget->SizeX != OutputSize.X ||
+		SceneViewDebugPreviewRenderTarget->SizeY != OutputSize.Y ||
+		SceneViewDebugPreviewRenderTarget->OverrideFormat != PF_FloatRGBA)
+	{
+		SceneViewDebugPreviewRenderTarget->InitCustomFormat(OutputSize.X, OutputSize.Y, PF_FloatRGBA, false);
+		SceneViewDebugPreviewRenderTarget->UpdateResourceImmediate(true);
+	}
+}
+
+void UMRBNNProjectSettings::MarkSceneViewDebugPreviewUpdated(const FString& DebugName, FIntPoint OutputSize, int32 FrameIndex, int32 CloudCount)
+{
+	LastSceneViewDebugRenderTargetName = DebugName;
+	LastSceneViewDebugOutputSize = OutputSize;
+	LastSceneViewDebugFrameIndex = FrameIndex;
+	LastSceneViewDebugCloudCount = CloudCount;
 }

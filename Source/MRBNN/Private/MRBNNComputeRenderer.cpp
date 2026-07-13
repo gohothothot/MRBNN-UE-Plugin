@@ -51,6 +51,9 @@ public:
 		SHADER_PARAMETER(float, DirectShadowDensity)
 		SHADER_PARAMETER(float, PhaseG)
 		SHADER_PARAMETER(float, PhaseStrength)
+		SHADER_PARAMETER(float, EdgeSilverStrength)
+		SHADER_PARAMETER(float, DeepShadowStrength)
+		SHADER_PARAMETER(float, PowderStrength)
 		SHADER_PARAMETER(float, BakedFeatureContribution)
 		SHADER_PARAMETER(float, MultiScatterContribution)
 		SHADER_PARAMETER(float, FeatureAlbedoBlend)
@@ -112,6 +115,9 @@ bool AddMRBNNComputeRenderPass(FRDGBuilder& GraphBuilder, const FMRBNNComputeRen
 	Parameters->DirectShadowDensity = FMath::Max(RenderDesc.ComputeSettings.DirectShadowDensity, 0.0f);
 	Parameters->PhaseG = FMath::Clamp(RenderDesc.ComputeSettings.PhaseG, -0.85f, 0.85f);
 	Parameters->PhaseStrength = FMath::Clamp(RenderDesc.ComputeSettings.PhaseStrength, 0.0f, 1.0f);
+	Parameters->EdgeSilverStrength = FMath::Clamp(RenderDesc.ComputeSettings.EdgeSilverStrength, 0.0f, 2.0f);
+	Parameters->DeepShadowStrength = FMath::Clamp(RenderDesc.ComputeSettings.DeepShadowStrength, 0.0f, 2.0f);
+	Parameters->PowderStrength = FMath::Clamp(RenderDesc.ComputeSettings.PowderStrength, 0.0f, 2.0f);
 	Parameters->BakedFeatureContribution = FMath::Clamp(RenderDesc.ComputeSettings.BakedFeatureContribution, 0.0f, 2.0f);
 	Parameters->MultiScatterContribution = FMath::Clamp(RenderDesc.ComputeSettings.MultiScatterContribution, 0.0f, 2.0f);
 	Parameters->FeatureAlbedoBlend = FMath::Clamp(RenderDesc.ComputeSettings.FeatureAlbedoBlend, 0.0f, 1.0f);

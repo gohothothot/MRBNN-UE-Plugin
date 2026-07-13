@@ -3,11 +3,25 @@
 #include "CoreMinimal.h"
 #include "Engine/DeveloperSettings.h"
 #include "Engine/EngineTypes.h"
-#include "MRBNNTypes.h"
 #include "MRBNNProjectSettings.generated.h"
 
 class UMRBNNBakedVolumeData;
-class UMRBNNVolumeComponent;
+class UTextureRenderTarget2D;
+
+UENUM(BlueprintType)
+enum class EMRBNNSceneViewDebugRT : uint8
+{
+	Disabled UMETA(DisplayName = "Disabled"),
+	ComputeCloud UMETA(DisplayName = "Compute Cloud")
+};
+
+UENUM(BlueprintType)
+enum class EMRBNNSceneViewDebugDisplayMode : uint8
+{
+	Hidden UMETA(DisplayName = "Hidden"),
+	Fullscreen UMETA(DisplayName = "Fullscreen"),
+	Overlay UMETA(DisplayName = "Overlay")
+};
 
 UCLASS(Config = Engine, DefaultConfig, DisplayName = "MRBNN")
 class MRBNN_API UMRBNNProjectSettings : public UDeveloperSettings
@@ -18,6 +32,7 @@ public:
 	UMRBNNProjectSettings();
 
 	static const UMRBNNProjectSettings* Get();
+	static UMRBNNProjectSettings* GetMutable();
 
 	virtual FName GetCategoryName() const override;
 	virtual FName GetSectionName() const override;
@@ -49,29 +64,35 @@ public:
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Debug")
 	bool bEnableVerboseLogging = false;
 
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Realtime", meta = (ClampMin = "64", UIMin = "128", UIMax = "1024"))
-	int32 RealtimeOutputWidth = 384;
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "RT Debug")
+	EMRBNNSceneViewDebugRT SceneViewDebugRenderTarget = EMRBNNSceneViewDebugRT::ComputeCloud;
 
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Realtime", meta = (ClampMin = "64", UIMin = "128", UIMax = "1024"))
-	int32 RealtimeOutputHeight = 384;
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "RT Debug")
+	EMRBNNSceneViewDebugDisplayMode SceneViewDebugDisplayMode = EMRBNNSceneViewDebugDisplayMode::Hidden;
 
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Realtime", meta = (ClampMin = "1", UIMin = "1", UIMax = "8"))
-	int32 RealtimeSamplesPerRender = 1;
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "RT Debug", meta = (ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.15", UIMax = "1.0"))
+	float SceneViewDebugPreviewOpacity = 1.0f;
 
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Realtime")
-	bool bRealtimeAccumulateFrames = true;
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "RT Debug", meta = (ClampMin = "0.1", ClampMax = "1.0", UIMin = "0.2", UIMax = "0.6", EditCondition = "SceneViewDebugDisplayMode == EMRBNNSceneViewDebugDisplayMode::Overlay"))
+	float SceneViewDebugOverlayScale = 0.35f;
 
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Realtime", meta = (ClampMin = "1", UIMin = "1", UIMax = "64"))
-	int32 RealtimeMaxAccumulatedFrames = 12;
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "RT Debug")
+	bool bLogSceneViewDebugRenderTarget = false;
 
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Realtime", meta = (ClampMin = "0", ClampMax = "2", UIMin = "0", UIMax = "2"))
-	int32 RealtimeSpatialDenoisePasses = 0;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "RT Debug")
+	TObjectPtr<UTextureRenderTarget2D> SceneViewDebugPreviewRenderTarget;
 
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Realtime")
-	bool bRealtimeFastDirectIllumination = true;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "RT Debug")
+	FString LastSceneViewDebugRenderTargetName;
 
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Rendering")
-	FMRBNNRenderSettings DefaultRenderSettings;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "RT Debug")
+	FIntPoint LastSceneViewDebugOutputSize = FIntPoint::ZeroValue;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "RT Debug")
+	int32 LastSceneViewDebugFrameIndex = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "RT Debug")
+	int32 LastSceneViewDebugCloudCount = 0;
 
 	UFUNCTION(BlueprintCallable, Category = "MRBNN|Paths")
 	static FString ResolveMRBNNPath(const FString& PathWithTokens);
@@ -80,5 +101,7 @@ public:
 	UMRBNNBakedVolumeData* CreateTransientDefaultBakedData(UObject* Outer, UPARAM(ref) FText& OutError) const;
 
 	bool ResolveDefaultDataSet(FString& OutRepositoryRoot, FString& OutWorkingDirectory, FString& OutSkyboxPath, FString& OutSkyboxBakingDirectory, FText& OutError) const;
-	void ApplyRealtimePreset(UMRBNNVolumeComponent& Component) const;
+
+	void EnsureSceneViewDebugPreviewRenderTarget(FIntPoint OutputSize);
+	void MarkSceneViewDebugPreviewUpdated(const FString& DebugName, FIntPoint OutputSize, int32 FrameIndex, int32 CloudCount);
 };

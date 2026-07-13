@@ -232,7 +232,7 @@ bool UMRBNNVolumeComponent::RenderOnce()
 	LastBackendRenderTimeMs = static_cast<float>(BackendRenderSeconds * 1000.0);
 	LastTotalRenderTimeMs = static_cast<float>((FPlatformTime::Seconds() - TotalStartSeconds) * 1000.0);
 	LastEstimatedSamplesPerSecond = BackendRenderSeconds > UE_SMALL_NUMBER ? static_cast<float>(SafeSamplesPerRender / BackendRenderSeconds) : 0.0f;
-	if (bLogRenderStats)
+	if (UMRBNNProjectSettings::Get()->bEnableVerboseLogging)
 	{
 		UE_LOG(LogTemp, Display, TEXT("MRBNN: %s"), *GetDebugSummary());
 	}
@@ -331,7 +331,17 @@ void UMRBNNVolumeComponent::ApplyGamePreviewSettings()
 
 void UMRBNNVolumeComponent::ApplyRealtimePreviewSettings()
 {
-	UMRBNNProjectSettings::Get()->ApplyRealtimePreset(*this);
+	OutputWidth = 384;
+	OutputHeight = 384;
+	SamplesPerRender = 1;
+	bAccumulateFrames = true;
+	MaxAccumulatedFrames = 12;
+	SpatialDenoisePasses = 0;
+	RenderSettings.LightColor = FLinearColor(2.2f, 2.2f, 2.2f, 1.0f);
+	RenderSettings.bFastDirectIllumination = true;
+	RenderSettings.bEnableSkybox = false;
+	RenderSettings.bEnableSkyboxBaking = false;
+	ResetProgressiveAccumulation();
 }
 
 void UMRBNNVolumeComponent::ApplyMobilePreviewSettings()

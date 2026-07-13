@@ -17,6 +17,9 @@
 /Source/ThirdParty/MRBNNBridge/build/
 /Source/ThirdParty/MRBNNBridge/out/
 
+# Local Codex deepwork notes.
+/.slim/deepwork/
+
 # Logs and temporary render outputs
 *.log
 *.tmp

@@ -11,7 +11,10 @@ param(
     [switch]$RunSmokeTest,
     [string]$SmokeTestWorkDir = "",
     [int]$SmokeTestSize = 1024,
-    [int]$SmokeTestSamples = 256
+    [int]$SmokeTestSamples = 256,
+    [switch]$BuildBakeConsole,
+    [switch]$RunBakeConsole,
+    [string]$BakeConsoleWorkDir = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -54,6 +57,79 @@ function Resolve-CudaArchitectures([string]$RequestedArchitectures) {
     }
 
     return "native"
+}
+
+function Get-InstalledCudaToolkitVersion() {
+    if ($env:CUDA_PATH) {
+        $VersionJsonPath = Join-Path $env:CUDA_PATH "version.json"
+        if (Test-Path $VersionJsonPath) {
+            try {
+                $VersionJson = Get-Content -LiteralPath $VersionJsonPath -Raw | ConvertFrom-Json
+                if ($VersionJson.cuda.version -match '^(?<Major>\d+)\.(?<Minor>\d+)') {
+                    return [version]"$($Matches.Major).$($Matches.Minor)"
+                }
+            } catch {
+            }
+        }
+    }
+
+    try {
+        $NvccVersion = & nvcc --version 2>$null
+        foreach ($Line in $NvccVersion) {
+            if ($Line -match 'release (?<Major>\d+)\.(?<Minor>\d+)') {
+                return [version]"$($Matches.Major).$($Matches.Minor)"
+            }
+        }
+    } catch {
+    }
+
+    return $null
+}
+
+function Get-DriverCudaVersion() {
+    try {
+        $Output = & nvidia-smi 2>$null
+        foreach ($Line in $Output) {
+            if ($Line -match 'CUDA Version:\s*(?<Major>\d+)\.(?<Minor>\d+)') {
+                return [version]"$($Matches.Major).$($Matches.Minor)"
+            }
+        }
+    } catch {
+    }
+
+    return $null
+}
+
+function Get-CudaCompatibilityWarning() {
+    $ToolkitVersion = Get-InstalledCudaToolkitVersion
+    $DriverCudaVersion = Get-DriverCudaVersion
+    if (-not $ToolkitVersion -or -not $DriverCudaVersion) {
+        return ""
+    }
+
+    if ($ToolkitVersion -gt $DriverCudaVersion) {
+        return "Installed CUDA toolkit/runtime is $ToolkitVersion but the NVIDIA driver reports CUDA $DriverCudaVersion. MRBNN's TCNN/NVRTC runtime render can fail with CUDA_ERROR_UNSUPPORTED_PTX_VERSION. Install a CUDA toolkit/runtime no newer than the driver support, or update the NVIDIA driver."
+    }
+
+    return ""
+}
+
+function Find-DefaultMRBNNRoot([string]$PluginRootPath) {
+    $Current = Resolve-FullPath $PluginRootPath
+    while ($Current) {
+        $Candidate = Join-Path $Current "third_party_refs/MRBNN"
+        if (Test-Path (Join-Path $Candidate "CMakeLists.txt")) {
+            return $Candidate
+        }
+
+        $Parent = Split-Path -Parent $Current
+        if (-not $Parent -or $Parent -eq $Current) {
+            break
+        }
+        $Current = $Parent
+    }
+
+    return Join-Path (Split-Path -Parent $PluginRootPath) "third_party_refs/MRBNN"
 }
 
 function Copy-MatchingFiles([string]$SourceDirectory, [string[]]$Patterns, [string[]]$Destinations) {
@@ -163,8 +239,7 @@ if (-not $PluginRoot) {
 $PluginRoot = Resolve-FullPath $PluginRoot
 
 if (-not $MRBNNRoot) {
-    $WorkspaceRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PluginRoot)))
-    $MRBNNRoot = Join-Path $WorkspaceRoot "third_party_refs/MRBNN"
+    $MRBNNRoot = Find-DefaultMRBNNRoot $PluginRoot
 }
 
 $MRBNNRoot = Resolve-FullPath $MRBNNRoot
@@ -187,16 +262,26 @@ if (-not (Get-Command nvcc -ErrorAction SilentlyContinue)) {
     throw "nvcc was not found on PATH after environment setup. Run Setup-MRBNNBuildEnv.ps1 first or rerun this script with -InstallCudaIfMissing."
 }
 
+$CudaCompatibilityWarning = Get-CudaCompatibilityWarning
+if ($CudaCompatibilityWarning) {
+    Write-Warning $CudaCompatibilityWarning
+    if ($RunSmokeTest) {
+        throw "Smoke test was not run because the installed CUDA toolkit/runtime is newer than the NVIDIA driver-supported CUDA version."
+    }
+}
+
 New-Item -ItemType Directory -Force -Path $BuildDir | Out-Null
 New-Item -ItemType Directory -Force -Path $DeployDir | Out-Null
 
 $ResolvedCudaArchitectures = Resolve-CudaArchitectures $CudaArchitectures
+$CMakeBuildBakeConsole = if ($BuildBakeConsole -or $RunBakeConsole) { "ON" } else { "OFF" }
 $ConfigureArgs = @(
     "-S", $BridgeSource,
     "-B", $BuildDir,
     "-DMRBNN_ROOT=$MRBNNRoot",
     "-DCMAKE_CUDA_ARCHITECTURES=$ResolvedCudaArchitectures",
     "-DTCNN_CUDA_ARCHITECTURES=$ResolvedCudaArchitectures",
+    "-DMRBNN_BUILD_BAKE_CONSOLE=$CMakeBuildBakeConsole",
     "-DCMAKE_BUILD_TYPE=$Configuration"
 )
 
@@ -205,21 +290,32 @@ if ($LASTEXITCODE -ne 0) {
     throw "CMake configure failed with exit code $LASTEXITCODE."
 }
 
-$BuildTarget = if ($RunSmokeTest) { "MRBNNBridgeSmokeTest" } else { "MRBNNBridge" }
-$BuildArgs = @(
-    "--build", $BuildDir,
-    "--config", $Configuration,
-    "--target", $BuildTarget,
-    "-j", $Parallel
-)
+$BuildTargets = @("MRBNNBridge")
+if ($RunSmokeTest) {
+    $BuildTargets += "MRBNNBridgeSmokeTest"
+}
+if ($BuildBakeConsole -or $RunBakeConsole) {
+    $BuildTargets += "MRBNNBakeConsole"
+}
+$BuildTargets = $BuildTargets | Select-Object -Unique
 
-& cmake @BuildArgs
-if ($LASTEXITCODE -ne 0) {
-    throw "CMake build failed with exit code $LASTEXITCODE."
+foreach ($BuildTarget in $BuildTargets) {
+    $BuildArgs = @(
+        "--build", $BuildDir,
+        "--config", $Configuration,
+        "--target", $BuildTarget,
+        "-j", $Parallel
+    )
+
+    & cmake @BuildArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "CMake build failed for target $BuildTarget with exit code $LASTEXITCODE."
+    }
 }
 
 $BridgeDll = Get-ChildItem $BuildDir -Recurse -Filter "MRBNNBridge.dll" | Where-Object { $_.FullName -match "\\$Configuration\\" -or $_.DirectoryName -eq $BuildDir } | Select-Object -First 1
 $TCNNDll = Get-ChildItem $BuildDir -Recurse -Filter "ExternalTCNN.dll" | Where-Object { $_.FullName -match "\\$Configuration\\" -or $_.DirectoryName -eq $BuildDir } | Select-Object -First 1
+$NetworkKernel = Join-Path $MRBNNRoot "external/Network.kernel"
 
 if (-not $BridgeDll) {
     throw "MRBNNBridge.dll was not found under $BuildDir after build."
@@ -227,9 +323,24 @@ if (-not $BridgeDll) {
 if (-not $TCNNDll) {
     throw "ExternalTCNN.dll was not found under $BuildDir after build."
 }
+if (-not (Test-Path $NetworkKernel)) {
+    throw "Network.kernel was not found under the MRBNN repository: $NetworkKernel"
+}
 
 Copy-Item -LiteralPath $BridgeDll.FullName -Destination (Join-Path $DeployDir "MRBNNBridge.dll") -Force
 Copy-Item -LiteralPath $TCNNDll.FullName -Destination (Join-Path $DeployDir "ExternalTCNN.dll") -Force
+Copy-Item -LiteralPath $NetworkKernel -Destination (Join-Path $DeployDir "Network.kernel") -Force
+Copy-Item -LiteralPath $NetworkKernel -Destination (Join-Path $BridgeDll.DirectoryName "Network.kernel") -Force
+
+$ConsoleExe = $null
+if ($BuildBakeConsole -or $RunBakeConsole) {
+    $ConsoleExe = Get-ChildItem $BuildDir -Recurse -Filter "MRBNNBakeConsole.exe" | Where-Object { $_.FullName -match "\\$Configuration\\" -or $_.DirectoryName -eq $BuildDir } | Select-Object -First 1
+    if (-not $ConsoleExe) {
+        throw "MRBNNBakeConsole.exe was not found under $BuildDir after build."
+    }
+
+    Copy-Item -LiteralPath $ConsoleExe.FullName -Destination (Join-Path $DeployDir "MRBNNBakeConsole.exe") -Force
+}
 
 if ($CudaRuntimeDir) {
     $CudaRuntimeDir = Resolve-FullPath $CudaRuntimeDir
@@ -238,7 +349,10 @@ if ($CudaRuntimeDir) {
 }
 Copy-MatchingFiles $CudaRuntimeDir @("nvrtc*.dll", "nvrtc-builtins*.dll", "nvJitLink*.dll", "cudart64_*.dll", "curand64_*.dll") @($DeployDir, $BridgeDll.DirectoryName)
 
-Write-Host "Deployed MRBNNBridge.dll and ExternalTCNN.dll to $DeployDir"
+Write-Host "Deployed MRBNNBridge.dll, ExternalTCNN.dll, and Network.kernel to $DeployDir"
+if ($ConsoleExe) {
+    Write-Host "Deployed MRBNNBakeConsole.exe to $DeployDir"
+}
 
 if ($RunSmokeTest) {
     if (-not $SmokeTestWorkDir) {
@@ -257,6 +371,7 @@ if ($RunSmokeTest) {
 
     $SmokeOutput = Join-Path $DeployDir "MRBNNBridgeSmokeTest.ppm"
     Copy-MatchingFiles $CudaRuntimeDir @("nvrtc*.dll", "nvrtc-builtins*.dll", "nvJitLink*.dll", "cudart64_*.dll", "curand64_*.dll") @($SmokeExe.DirectoryName)
+    Copy-Item -LiteralPath $NetworkKernel -Destination (Join-Path $SmokeExe.DirectoryName "Network.kernel") -Force
     & $SmokeExe.FullName $SmokeTestWorkDir $MRBNNRoot $SmokeOutput $SmokeTestSize $SmokeTestSamples
     if ($LASTEXITCODE -ne 0) {
         throw "MRBNNBridgeSmokeTest failed with exit code $LASTEXITCODE."
@@ -267,4 +382,33 @@ if ($RunSmokeTest) {
 
     Write-Host "Smoke test image: $SmokeOutput"
     Write-Host "Smoke test preview: $SmokePreviewPng"
+}
+
+if ($RunBakeConsole) {
+    if (-not $BakeConsoleWorkDir) {
+        if ($SmokeTestWorkDir) {
+            $BakeConsoleWorkDir = $SmokeTestWorkDir
+        } else {
+            $BakeConsoleWorkDir = Join-Path $MRBNNRoot "data/cloud-03"
+        }
+    }
+
+    $BakeConsoleWorkDir = Resolve-FullPath $BakeConsoleWorkDir
+    if (-not (Test-Path (Join-Path $BakeConsoleWorkDir "config.json"))) {
+        throw "BakeConsoleWorkDir does not contain config.json: $BakeConsoleWorkDir"
+    }
+
+    $DeployedConsoleExe = Join-Path $DeployDir "MRBNNBakeConsole.exe"
+    if (-not (Test-Path $DeployedConsoleExe)) {
+        throw "MRBNNBakeConsole.exe was not deployed to $DeployedConsoleExe"
+    }
+
+    $env:MRBNN_NETWORK_KERNEL_PATH = Join-Path $DeployDir "Network.kernel"
+    $ConsoleArguments = @(
+        "`"$BakeConsoleWorkDir`"",
+        "`"$MRBNNRoot`"",
+        "`"$PluginRoot`""
+    )
+    Start-Process -FilePath $DeployedConsoleExe -ArgumentList $ConsoleArguments -WorkingDirectory $DeployDir
+    Write-Host "Launched MRBNNBakeConsole.exe with work dir $BakeConsoleWorkDir"
 }

@@ -44,7 +44,7 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MRBNN|Example")
 	TObjectPtr<UStaticMeshComponent> PreviewPlane;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MRBNN|Debug")
+	UPROPERTY(Transient, BlueprintReadOnly, Category = "MRBNN|Example")
 	TObjectPtr<UTextRenderComponent> DebugText;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MRBNN|Example")
@@ -77,7 +77,7 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Display")
 	FRotator PreviewPlaneRotation = FRotator(-90.0f, 0.0f, 0.0f);
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Debug")
+	UPROPERTY(Transient, BlueprintReadWrite, Category = "MRBNN|Example")
 	bool bShowDebugLabel = true;
 
 	UFUNCTION(BlueprintCallable, CallInEditor, Category = "MRBNN|Example")
@@ -101,7 +101,7 @@ public:
 	UFUNCTION(BlueprintCallable, CallInEditor, Category = "MRBNN|Quality")
 	void ApplyHighQualityPreviewSettings();
 
-	UFUNCTION(BlueprintCallable, CallInEditor, Category = "MRBNN|Debug")
+	UFUNCTION(BlueprintCallable, CallInEditor, Category = "MRBNN|Quality")
 	void ResetPreviewAccumulation();
 
 protected:

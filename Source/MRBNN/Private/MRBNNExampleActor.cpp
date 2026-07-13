@@ -127,7 +127,7 @@ bool AMRBNNExampleActor::ConfigureSampleData()
 	ExampleBakedData->SkyboxBakingDirectory.Path = bEnableSampleSkyboxBaking ? SkyboxBakingDirectory : FString();
 
 	MRBNNVolume->BakedData = ExampleBakedData;
-	MRBNNVolume->RenderSettings = UMRBNNProjectSettings::Get()->DefaultRenderSettings;
+	MRBNNVolume->RenderSettings.bFastDirectIllumination = true;
 	MRBNNVolume->RenderSettings.bEnableSkybox = bEnableSampleSkybox && !SkyboxPath.IsEmpty();
 	MRBNNVolume->RenderSettings.bEnableSkyboxBaking = bEnableSampleSkyboxBaking && !SkyboxBakingDirectory.IsEmpty();
 	return true;

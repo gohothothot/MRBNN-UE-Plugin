@@ -29,10 +29,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN")
 	bool bUseProjectSettingsWhenBakedDataMissing = true;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN", meta = (ClampMin = "1", UIMin = "64", UIMax = "2048"))
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MRBNN", meta = (ClampMin = "1", UIMin = "64", UIMax = "2048"))
 	int32 OutputWidth = 1024;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN", meta = (ClampMin = "1", UIMin = "64", UIMax = "2048"))
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MRBNN", meta = (ClampMin = "1", UIMin = "64", UIMax = "2048"))
 	int32 OutputHeight = 1024;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN")
@@ -44,20 +44,17 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN")
 	bool bRenderEveryTick = false;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Quality", meta = (ClampMin = "1", UIMin = "1", UIMax = "64"))
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MRBNN|Quality", meta = (ClampMin = "1", UIMin = "1", UIMax = "64"))
 	int32 SamplesPerRender = 1;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Quality")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MRBNN|Quality")
 	bool bAccumulateFrames = true;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Quality", meta = (ClampMin = "1", UIMin = "1", UIMax = "512", EditCondition = "bAccumulateFrames"))
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MRBNN|Quality", meta = (ClampMin = "1", UIMin = "1", UIMax = "512"))
 	int32 MaxAccumulatedFrames = 64;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Quality", meta = (ClampMin = "0", ClampMax = "4", UIMin = "0", UIMax = "2"))
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MRBNN|Quality", meta = (ClampMin = "0", ClampMax = "4", UIMin = "0", UIMax = "2"))
 	int32 SpatialDenoisePasses = 0;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Debug")
-	bool bLogRenderStats = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN", meta = (AdvancedDisplay))
 	bool bAllowAutomaticRenderInEditor = false;
@@ -89,37 +86,37 @@ public:
 	UPROPERTY(Transient, BlueprintReadOnly, Category = "MRBNN")
 	TObjectPtr<UTextureRenderTarget2D> OutputRenderTarget;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "MRBNN|Debug")
+	UPROPERTY(Transient, BlueprintReadOnly, Category = "MRBNN|Runtime")
 	int32 LastFrameIndex = 0;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "MRBNN|Debug")
+	UPROPERTY(Transient, BlueprintReadOnly, Category = "MRBNN|Runtime")
 	int32 LastRenderedSampleCount = 0;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "MRBNN|Debug")
+	UPROPERTY(Transient, BlueprintReadOnly, Category = "MRBNN|Runtime")
 	int32 LastAccumulatedFrameCount = 0;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "MRBNN|Debug")
+	UPROPERTY(Transient, BlueprintReadOnly, Category = "MRBNN|Runtime")
 	float LastBackendRenderTimeMs = 0.0f;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "MRBNN|Debug")
+	UPROPERTY(Transient, BlueprintReadOnly, Category = "MRBNN|Runtime")
 	float LastDenoiseTimeMs = 0.0f;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "MRBNN|Debug")
+	UPROPERTY(Transient, BlueprintReadOnly, Category = "MRBNN|Runtime")
 	float LastTextureUploadTimeMs = 0.0f;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "MRBNN|Debug")
+	UPROPERTY(Transient, BlueprintReadOnly, Category = "MRBNN|Runtime")
 	float LastMaterialApplyTimeMs = 0.0f;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "MRBNN|Debug")
+	UPROPERTY(Transient, BlueprintReadOnly, Category = "MRBNN|Runtime")
 	float LastTotalRenderTimeMs = 0.0f;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "MRBNN|Debug")
+	UPROPERTY(Transient, BlueprintReadOnly, Category = "MRBNN|Runtime")
 	float LastEstimatedSamplesPerSecond = 0.0f;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "MRBNN|Debug")
+	UPROPERTY(Transient, BlueprintReadOnly, Category = "MRBNN|Runtime")
 	FString LastResolvedWorkingDirectory;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Transient, Category = "MRBNN|Debug")
+	UPROPERTY(Transient, BlueprintReadOnly, Category = "MRBNN|Runtime")
 	FString LastResolvedRepositoryRoot;
 
 	UFUNCTION(BlueprintCallable, Category = "MRBNN")
@@ -137,31 +134,31 @@ public:
 	bool BuildComputeVolumeRenderDesc(UVolumeTexture* DensityTexture, UVolumeTexture* FeatureTexture, const FMRBNNComputeVolumeSettings& ComputeSettings, FMRBNNComputeRenderer::FRenderDesc& OutDesc);
 	void MarkComputeVolumeRenderDispatched(double DispatchStartSeconds);
 
-	UFUNCTION(BlueprintCallable, CallInEditor, Category = "MRBNN|Quality")
+	UFUNCTION(BlueprintCallable, Category = "MRBNN|Quality")
 	void ResetProgressiveAccumulation();
 
-	UFUNCTION(BlueprintCallable, CallInEditor, Category = "MRBNN|Quality")
+	UFUNCTION(BlueprintCallable, Category = "MRBNN|Quality")
 	void ApplyGamePreviewSettings();
 
-	UFUNCTION(BlueprintCallable, CallInEditor, Category = "MRBNN|Quality")
+	UFUNCTION(BlueprintCallable, Category = "MRBNN|Quality")
 	void ApplyRealtimePreviewSettings();
 
-	UFUNCTION(BlueprintCallable, CallInEditor, Category = "MRBNN|Quality")
+	UFUNCTION(BlueprintCallable, Category = "MRBNN|Quality")
 	void ApplyMobilePreviewSettings();
 
-	UFUNCTION(BlueprintCallable, CallInEditor, Category = "MRBNN|Quality")
+	UFUNCTION(BlueprintCallable, Category = "MRBNN|Quality")
 	void ApplyBalancedPreviewSettings();
 
-	UFUNCTION(BlueprintCallable, CallInEditor, Category = "MRBNN|Quality")
+	UFUNCTION(BlueprintCallable, Category = "MRBNN|Quality")
 	void ApplyHighQualityPreviewSettings();
 
-	UFUNCTION(BlueprintCallable, CallInEditor, Category = "MRBNN|Quality")
+	UFUNCTION(BlueprintCallable, Category = "MRBNN|Quality")
 	void ApplyPaperPreviewSettings();
 
 	UFUNCTION(BlueprintCallable, Category = "MRBNN")
 	int32 GetAccumulatedFrameCount() const { return AccumulatedFrameCount; }
 
-	UFUNCTION(BlueprintCallable, Category = "MRBNN|Debug")
+	UFUNCTION(BlueprintCallable, Category = "MRBNN")
 	FString GetDebugSummary() const;
 
 	UFUNCTION(BlueprintCallable, Category = "MRBNN")

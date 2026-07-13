@@ -6,12 +6,20 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
 #if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
 #define MRBNNBRIDGE_API extern "C" __declspec(dllexport)
 #else
 #define MRBNNBRIDGE_API extern "C" __attribute__((visibility("default")))
@@ -103,6 +111,86 @@ glm::vec3 MakeVec3(float X, float Y, float Z)
 	return glm::vec3{ X, Y, Z };
 }
 
+bool FileExists(const std::filesystem::path& Path)
+{
+	std::error_code Error;
+	return std::filesystem::is_regular_file(Path, Error);
+}
+
+std::string ToUtf8(const std::filesystem::path& Path)
+{
+	const auto U8 = Path.u8string();
+	return std::string(reinterpret_cast<const char*>(U8.c_str()), U8.size());
+}
+
+std::filesystem::path GetBridgeDirectory()
+{
+#if defined(_WIN32)
+	HMODULE Module = nullptr;
+	if (!GetModuleHandleExW(
+			GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+			reinterpret_cast<LPCWSTR>(&GetBridgeDirectory),
+			&Module))
+	{
+		return {};
+	}
+
+	wchar_t Buffer[MAX_PATH] = {};
+	constexpr DWORD BufferLength = static_cast<DWORD>(sizeof(Buffer) / sizeof(Buffer[0]));
+	const DWORD Length = GetModuleFileNameW(Module, Buffer, BufferLength);
+	if (Length == 0 || Length >= BufferLength)
+	{
+		return {};
+	}
+
+	return std::filesystem::path(Buffer).parent_path();
+#else
+	return {};
+#endif
+}
+
+void SetProcessEnvironment(const char* Name, const std::string& Value)
+{
+#if defined(_WIN32)
+	_putenv_s(Name, Value.c_str());
+#else
+	setenv(Name, Value.c_str(), 1);
+#endif
+}
+
+std::string GetProcessEnvironment(const char* Name)
+{
+	if (const char* Value = std::getenv(Name))
+	{
+		return Value;
+	}
+	return {};
+}
+
+void SetKernelPathIfAvailable(const char* RepositoryRootUtf8)
+{
+	if (!GetProcessEnvironment("MRBNN_NETWORK_KERNEL_PATH").empty())
+	{
+		return;
+	}
+
+	const std::filesystem::path BridgeKernelPath = GetBridgeDirectory() / "Network.kernel";
+	if (FileExists(BridgeKernelPath))
+	{
+		SetProcessEnvironment("MRBNN_NETWORK_KERNEL_PATH", ToUtf8(BridgeKernelPath));
+		return;
+	}
+
+	if (RepositoryRootUtf8 && *RepositoryRootUtf8)
+	{
+		const std::filesystem::path RepositoryKernelPath = std::filesystem::path(RepositoryRootUtf8) / "external" / "Network.kernel";
+		if (FileExists(RepositoryKernelPath))
+		{
+			SetProcessEnvironment("MRBNN_NETWORK_KERNEL_PATH", ToUtf8(RepositoryKernelPath));
+		}
+	}
+}
+
 void SetRelativePathRoot(const char* RepositoryRootUtf8)
 {
 	if (!RepositoryRootUtf8 || !*RepositoryRootUtf8)
@@ -110,11 +198,8 @@ void SetRelativePathRoot(const char* RepositoryRootUtf8)
 		return;
 	}
 
-#if defined(_WIN32)
-	_putenv_s("MRBNN_RELA_PATH_ROOT", RepositoryRootUtf8);
-#else
-	setenv("MRBNN_RELA_PATH_ROOT", RepositoryRootUtf8, 1);
-#endif
+	SetProcessEnvironment("MRBNN_RELA_PATH_ROOT", RepositoryRootUtf8);
+	SetKernelPathIfAvailable(RepositoryRootUtf8);
 }
 }
 

@@ -4,11 +4,13 @@
 #include "Components/ActorComponent.h"
 #include "Math/Float16Color.h"
 #include "MRBNNBakedVolumeData.h"
+#include "MRBNNComputeRenderer.h"
 #include "MRBNNTypes.h"
 #include "MRBNNVolumeComponent.generated.h"
 
 class UTexture2D;
 class UTextureRenderTarget2D;
+class UVolumeTexture;
 class UMaterialInstanceDynamic;
 class UPrimitiveComponent;
 class IMRBNNBackend;
@@ -129,6 +131,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "MRBNN")
 	bool RenderOnce();
 
+	UFUNCTION(BlueprintCallable, Category = "MRBNN|Compute")
+	bool RenderComputeVolumeOnce(UVolumeTexture* DensityTexture, UVolumeTexture* FeatureTexture, const FMRBNNComputeVolumeSettings& ComputeSettings);
+
+	bool BuildComputeVolumeRenderDesc(UVolumeTexture* DensityTexture, UVolumeTexture* FeatureTexture, const FMRBNNComputeVolumeSettings& ComputeSettings, FMRBNNComputeRenderer::FRenderDesc& OutDesc);
+	void MarkComputeVolumeRenderDispatched(double DispatchStartSeconds);
+
 	UFUNCTION(BlueprintCallable, CallInEditor, Category = "MRBNN|Quality")
 	void ResetProgressiveAccumulation();
 
@@ -146,6 +154,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, CallInEditor, Category = "MRBNN|Quality")
 	void ApplyHighQualityPreviewSettings();
+
+	UFUNCTION(BlueprintCallable, CallInEditor, Category = "MRBNN|Quality")
+	void ApplyPaperPreviewSettings();
 
 	UFUNCTION(BlueprintCallable, Category = "MRBNN")
 	int32 GetAccumulatedFrameCount() const { return AccumulatedFrameCount; }

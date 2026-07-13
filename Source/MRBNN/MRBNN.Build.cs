@@ -13,7 +13,9 @@ public class MRBNN : ModuleRules
 				"Core",
 				"CoreUObject",
 				"DeveloperSettings",
-				"Engine"
+				"Engine",
+				"RenderCore",
+				"RHI"
 			});
 
 		PrivateDependencyModuleNames.AddRange(
@@ -23,8 +25,7 @@ public class MRBNN : ModuleRules
 				"Json",
 				"JsonUtilities",
 				"Projects",
-				"RenderCore",
-				"RHI"
+				"Renderer"
 			});
 
 		RuntimeDependencies.Add("$(PluginDir)/Data/...", StagedFileType.NonUFS);

@@ -1,6 +1,8 @@
 param(
     [string]$MRBNNRoot = "",
     [string]$PluginRoot = "",
+    [string]$BuildDir = "",
+    [string]$CudaRuntimeDir = "",
     [string]$Configuration = "Release",
     [int]$Parallel = 16,
     [string]$CudaArchitectures = "native",
@@ -167,7 +169,10 @@ if (-not $MRBNNRoot) {
 
 $MRBNNRoot = Resolve-FullPath $MRBNNRoot
 $BridgeSource = Join-Path $PluginRoot "Source/ThirdParty/MRBNNBridge"
-$BuildDir = Join-Path $PluginRoot "Intermediate/MRBNNBridge"
+if (-not $BuildDir) {
+    $BuildDir = Join-Path $PluginRoot "Intermediate/MRBNNBridge"
+}
+$BuildDir = Resolve-FullPath $BuildDir
 $DeployDir = Join-Path $PluginRoot "Binaries/ThirdParty/MRBNNBridge/Win64"
 
 if (-not (Test-Path (Join-Path $MRBNNRoot "CMakeLists.txt"))) {
@@ -226,8 +231,12 @@ if (-not $TCNNDll) {
 Copy-Item -LiteralPath $BridgeDll.FullName -Destination (Join-Path $DeployDir "MRBNNBridge.dll") -Force
 Copy-Item -LiteralPath $TCNNDll.FullName -Destination (Join-Path $DeployDir "ExternalTCNN.dll") -Force
 
-$CudaRuntimeDir = Join-Path $env:CUDA_PATH "bin\x64"
-Copy-MatchingFiles $CudaRuntimeDir @("nvrtc*.dll", "nvrtc-builtins*.dll", "nvJitLink*.dll", "cudart64_*.dll") @($DeployDir, $BridgeDll.DirectoryName)
+if ($CudaRuntimeDir) {
+    $CudaRuntimeDir = Resolve-FullPath $CudaRuntimeDir
+} else {
+    $CudaRuntimeDir = Join-Path $env:CUDA_PATH "bin\x64"
+}
+Copy-MatchingFiles $CudaRuntimeDir @("nvrtc*.dll", "nvrtc-builtins*.dll", "nvJitLink*.dll", "cudart64_*.dll", "curand64_*.dll") @($DeployDir, $BridgeDll.DirectoryName)
 
 Write-Host "Deployed MRBNNBridge.dll and ExternalTCNN.dll to $DeployDir"
 
@@ -247,7 +256,7 @@ if ($RunSmokeTest) {
     }
 
     $SmokeOutput = Join-Path $DeployDir "MRBNNBridgeSmokeTest.ppm"
-    Copy-MatchingFiles $CudaRuntimeDir @("nvrtc*.dll", "nvrtc-builtins*.dll", "nvJitLink*.dll", "cudart64_*.dll") @($SmokeExe.DirectoryName)
+    Copy-MatchingFiles $CudaRuntimeDir @("nvrtc*.dll", "nvrtc-builtins*.dll", "nvJitLink*.dll", "cudart64_*.dll", "curand64_*.dll") @($SmokeExe.DirectoryName)
     & $SmokeExe.FullName $SmokeTestWorkDir $MRBNNRoot $SmokeOutput $SmokeTestSize $SmokeTestSamples
     if ($LASTEXITCODE -ne 0) {
         throw "MRBNNBridgeSmokeTest failed with exit code $LASTEXITCODE."

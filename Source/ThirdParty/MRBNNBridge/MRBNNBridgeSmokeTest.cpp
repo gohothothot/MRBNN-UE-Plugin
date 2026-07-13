@@ -86,6 +86,19 @@ bool WritePPM(const std::filesystem::path& OutputPath, int Width, int Height, co
 	return static_cast<bool>(Out);
 }
 
+bool WriteRawRGBA32F(const std::filesystem::path& OutputPath, const std::vector<float>& Pixels)
+{
+	std::ofstream Out(OutputPath, std::ios::binary);
+	if (!Out)
+	{
+		std::cerr << "Failed to open raw output: " << OutputPath << "\n";
+		return false;
+	}
+
+	Out.write(reinterpret_cast<const char*>(Pixels.data()), static_cast<std::streamsize>(Pixels.size() * sizeof(float)));
+	return static_cast<bool>(Out);
+}
+
 void ApplySpatialDenoise(std::vector<float>& Pixels, int Width, int Height, int PassCount)
 {
 	if (PassCount <= 0 || Width < 3 || Height < 3)
@@ -215,7 +228,18 @@ int main(int Argc, char** Argv)
 	}
 
 	MRBNN_Destroy(Renderer);
+	const std::filesystem::path RawOutputPath = OutputPath.string() + ".rgba32f";
+	if (!WriteRawRGBA32F(RawOutputPath, Pixels))
+	{
+		return 1;
+	}
+
 	ApplySpatialDenoise(Pixels, Size, Size, 2);
+	const std::filesystem::path DenoisedRawOutputPath = OutputPath.string() + ".denoised.rgba32f";
+	if (!WriteRawRGBA32F(DenoisedRawOutputPath, Pixels))
+	{
+		return 1;
+	}
 
 	if (!WritePPM(OutputPath, Size, Size, Pixels))
 	{
@@ -223,5 +247,7 @@ int main(int Argc, char** Argv)
 	}
 
 	std::cout << "Wrote smoke-test image: " << OutputPath << "\n";
+	std::cout << "Wrote raw float RGBA: " << RawOutputPath << "\n";
+	std::cout << "Wrote denoised raw float RGBA: " << DenoisedRawOutputPath << "\n";
 	return 0;
 }

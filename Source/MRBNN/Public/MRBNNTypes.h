@@ -68,3 +68,63 @@ struct MRBNN_API FMRBNNRenderSettings
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN")
 	bool bEnableSkyboxBaking = false;
 };
+
+USTRUCT(BlueprintType)
+struct MRBNN_API FMRBNNComputeVolumeSettings
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute", meta = (ClampMin = "4", ClampMax = "192", UIMin = "32", UIMax = "128"))
+	int32 StepCount = 96;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute", meta = (ClampMin = "0", ClampMax = "16", UIMin = "2", UIMax = "8"))
+	int32 DirectShadowSteps = 5;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute", meta = (ClampMin = "0.0", UIMin = "0.0", UIMax = "0.2"))
+	float Opacity = 0.065f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute", meta = (ClampMin = "0.0", UIMin = "0.0", UIMax = "4.0"))
+	float Ambient = 0.35f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute", meta = (ClampMin = "0.0", UIMin = "0.0", UIMax = "6.0"))
+	float Directional = 1.45f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute", meta = (ClampMin = "0.0", UIMin = "0.0", UIMax = "2.0"))
+	float ShadowStrength = 0.6f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute", meta = (ClampMin = "0.001", UIMin = "0.01", UIMax = "0.25"))
+	float LightStep = 0.065f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute", meta = (ClampMin = "0.0", UIMin = "0.0", UIMax = "8.0"))
+	float Brightness = 1.85f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute", meta = (ClampMin = "0.0", UIMin = "0.0", UIMax = "6.0"))
+	float DirectLightIntensity = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute", meta = (ClampMin = "0.0", UIMin = "0.0", UIMax = "4.0"))
+	float DirectShadowDensity = 1.35f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute", meta = (ClampMin = "-0.85", ClampMax = "0.85", UIMin = "-0.2", UIMax = "0.75"))
+	float PhaseG = 0.35f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute", meta = (ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
+	float PhaseStrength = 0.75f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute")
+	bool bUseBakedFeatures = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute", meta = (ClampMin = "0.0", ClampMax = "2.0", UIMin = "0.0", UIMax = "1.5"))
+	float BakedFeatureContribution = 0.7f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute", meta = (ClampMin = "0.0", ClampMax = "2.0", UIMin = "0.0", UIMax = "1.5"))
+	float MultiScatterContribution = 0.8f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute", meta = (ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
+	float FeatureAlbedoBlend = 0.25f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute")
+	FLinearColor CloudColor = FLinearColor(0.86f, 0.90f, 0.92f, 1.0f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute")
+	FLinearColor BakedFeatureTint = FLinearColor(1.0f, 0.965f, 0.88f, 1.0f);
+};

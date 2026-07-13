@@ -1,10 +1,12 @@
 #include "MRBNNVolumeComponent.h"
 
 #include "MRBNNBackend.h"
+#include "MRBNNComputeRenderer.h"
 #include "MRBNNProjectSettings.h"
 #include "Engine/Texture2D.h"
 #include "Engine/TextureDefines.h"
 #include "Engine/TextureRenderTarget2D.h"
+#include "Engine/VolumeTexture.h"
 #include "GameFramework/PlayerController.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Components/PrimitiveComponent.h"
@@ -239,6 +241,76 @@ bool UMRBNNVolumeComponent::RenderOnce()
 	return true;
 }
 
+bool UMRBNNVolumeComponent::RenderComputeVolumeOnce(UVolumeTexture* DensityTexture, UVolumeTexture* FeatureTexture, const FMRBNNComputeVolumeSettings& ComputeSettings)
+{
+	FMRBNNComputeRenderer::FRenderDesc RenderDesc;
+	if (!BuildComputeVolumeRenderDesc(DensityTexture, FeatureTexture, ComputeSettings, RenderDesc))
+	{
+		return false;
+	}
+
+	const double DispatchStartSeconds = FPlatformTime::Seconds();
+	if (!FMRBNNComputeRenderer::EnqueueRender(RenderDesc))
+	{
+		SetLastError(NSLOCTEXT("MRBNN", "ComputeDispatchFailed", "MRBNN compute render could not enqueue the global shader dispatch."));
+		return false;
+	}
+
+	MarkComputeVolumeRenderDispatched(DispatchStartSeconds);
+	return true;
+}
+
+bool UMRBNNVolumeComponent::BuildComputeVolumeRenderDesc(UVolumeTexture* DensityTexture, UVolumeTexture* FeatureTexture, const FMRBNNComputeVolumeSettings& ComputeSettings, FMRBNNComputeRenderer::FRenderDesc& OutDesc)
+{
+	RefreshCameraFromPlayerView();
+	EnsureOutputRenderTarget();
+
+	if (!DensityTexture || !OutputRenderTarget)
+	{
+		SetLastError(NSLOCTEXT("MRBNN", "ComputeMissingTexture", "MRBNN compute render requires a density volume texture and an output render target."));
+		return false;
+	}
+
+	FTextureResource* DensityResource = DensityTexture->GetResource();
+	FTextureResource* FeatureResource = FeatureTexture ? FeatureTexture->GetResource() : nullptr;
+	FTextureRenderTargetResource* RenderTargetResource = OutputRenderTarget->GameThread_GetRenderTargetResource();
+	if (!DensityResource || !DensityResource->TextureRHI.IsValid() || !RenderTargetResource || !RenderTargetResource->GetRenderTargetTexture().IsValid())
+	{
+		SetLastError(NSLOCTEXT("MRBNN", "ComputeMissingRHI", "MRBNN compute render is waiting for RHI resources to initialize."));
+		return false;
+	}
+
+	OutDesc = FMRBNNComputeRenderer::FRenderDesc();
+	OutDesc.DensityTexture = DensityResource->TextureRHI;
+	OutDesc.FeatureTexture = FeatureResource && FeatureResource->TextureRHI.IsValid() ? FeatureResource->TextureRHI : DensityResource->TextureRHI;
+	OutDesc.OutputTexture = RenderTargetResource->GetRenderTargetTexture();
+	OutDesc.OutputSize = FIntPoint(OutputWidth, OutputHeight);
+	OutDesc.RenderSettings = RenderSettings;
+	OutDesc.ComputeSettings = ComputeSettings;
+	OutDesc.FrameIndex = FrameIndex;
+	SetLastError(FText::GetEmpty());
+	return true;
+}
+
+void UMRBNNVolumeComponent::MarkComputeVolumeRenderDispatched(double DispatchStartSeconds)
+{
+	const double TotalStartSeconds = DispatchStartSeconds;
+	++FrameIndex;
+	LastFrameIndex = FrameIndex;
+	LastRenderedSampleCount = 1;
+	LastAccumulatedFrameCount = 1;
+	LastBackendRenderTimeMs = static_cast<float>((FPlatformTime::Seconds() - DispatchStartSeconds) * 1000.0);
+	LastDenoiseTimeMs = 0.0f;
+	LastTextureUploadTimeMs = 0.0f;
+
+	const double MaterialApplyStartSeconds = FPlatformTime::Seconds();
+	ApplyOutputToMaterialTargets();
+	LastMaterialApplyTimeMs = static_cast<float>((FPlatformTime::Seconds() - MaterialApplyStartSeconds) * 1000.0);
+	LastTotalRenderTimeMs = static_cast<float>((FPlatformTime::Seconds() - TotalStartSeconds) * 1000.0);
+	LastEstimatedSamplesPerSecond = LastTotalRenderTimeMs > UE_SMALL_NUMBER ? 1000.0f / LastTotalRenderTimeMs : 0.0f;
+	SetLastError(FText::GetEmpty());
+}
+
 void UMRBNNVolumeComponent::ResetProgressiveAccumulation()
 {
 	AccumulatedAveragePixels.Reset();
@@ -295,6 +367,24 @@ void UMRBNNVolumeComponent::ApplyHighQualityPreviewSettings()
 	bAccumulateFrames = true;
 	MaxAccumulatedFrames = 256;
 	SpatialDenoisePasses = 2;
+	ResetProgressiveAccumulation();
+}
+
+void UMRBNNVolumeComponent::ApplyPaperPreviewSettings()
+{
+	OutputWidth = 1024;
+	OutputHeight = 1024;
+	SamplesPerRender = 8;
+	bAccumulateFrames = true;
+	MaxAccumulatedFrames = 128;
+	SpatialDenoisePasses = 2;
+	RenderSettings.ToneMapping = EMRBNNToneMapping::ACES;
+	RenderSettings.Denoise = EMRBNNDenoiseMode::VisualPlausible;
+	RenderSettings.Compatibility = EMRBNNCompatibilityMode::Normal;
+	RenderSettings.bExcludeLightEncoding = true;
+	RenderSettings.bFastDirectIllumination = false;
+	RenderSettings.bEnableSkybox = false;
+	RenderSettings.bEnableSkyboxBaking = true;
 	ResetProgressiveAccumulation();
 }
 
@@ -384,14 +474,19 @@ void UMRBNNVolumeComponent::EnsureOutputRenderTarget()
 		OutputRenderTarget = NewObject<UTextureRenderTarget2D>(this, TEXT("MRBNN_OutputRT"), RF_Transient);
 		OutputRenderTarget->ClearColor = FLinearColor::Black;
 		OutputRenderTarget->bAutoGenerateMips = false;
+		OutputRenderTarget->bSupportsUAV = true;
 		OutputRenderTarget->Filter = TF_Bilinear;
 		OutputRenderTarget->InitCustomFormat(OutputWidth, OutputHeight, PF_FloatRGBA, false);
 		OutputRenderTarget->UpdateResourceImmediate(true);
 		return;
 	}
 
-	if (OutputRenderTarget->SizeX != OutputWidth || OutputRenderTarget->SizeY != OutputHeight || OutputRenderTarget->OverrideFormat != PF_FloatRGBA)
+	if (OutputRenderTarget->SizeX != OutputWidth ||
+		OutputRenderTarget->SizeY != OutputHeight ||
+		OutputRenderTarget->OverrideFormat != PF_FloatRGBA ||
+		!OutputRenderTarget->bSupportsUAV)
 	{
+		OutputRenderTarget->bSupportsUAV = true;
 		OutputRenderTarget->InitCustomFormat(OutputWidth, OutputHeight, PF_FloatRGBA, false);
 		OutputRenderTarget->UpdateResourceImmediate(true);
 	}

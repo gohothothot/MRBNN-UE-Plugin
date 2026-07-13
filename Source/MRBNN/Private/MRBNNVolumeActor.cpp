@@ -27,7 +27,10 @@
 #include "Math/Float16.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "MRBNNSceneViewExtension.h"
 #include "MRBNNVolumeComponent.h"
+#include "SceneView.h"
+#include "SceneViewExtension.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "UObject/ConstructorHelpers.h"
@@ -269,6 +272,35 @@ uint8 QuantizeFeatureEnergy(float Value, float MeanValue, float MaxValue)
 	const float Scale = FMath::Max3(MeanValue * 3.0f, MaxValue * 0.22f, 0.0001f);
 	return Quantize01(Value / Scale);
 }
+
+FVector GetSafeVolumeExtent(const FVector& VolumeExtent)
+{
+	return FVector(
+		FMath::Max(VolumeExtent.X, 1.0f),
+		FMath::Max(VolumeExtent.Y, 1.0f),
+		FMath::Max(VolumeExtent.Z, 1.0f));
+}
+
+FVector TransformWorldPositionToVolumeUnitBox(const FTransform& ActorTransform, const FVector& VolumeExtent, const FVector& WorldPosition)
+{
+	const FVector SafeExtent = GetSafeVolumeExtent(VolumeExtent);
+	const FVector LocalPosition = ActorTransform.InverseTransformPosition(WorldPosition);
+	return FVector(
+		LocalPosition.X / (SafeExtent.X * 2.0f),
+		LocalPosition.Y / (SafeExtent.Y * 2.0f),
+		LocalPosition.Z / (SafeExtent.Z * 2.0f));
+}
+
+FVector TransformWorldVectorToVolumeUnitBox(const FTransform& ActorTransform, const FVector& VolumeExtent, const FVector& WorldVector, const FVector& Fallback)
+{
+	const FVector SafeExtent = GetSafeVolumeExtent(VolumeExtent);
+	const FVector LocalVector = ActorTransform.InverseTransformVectorNoScale(WorldVector);
+	const FVector VolumeVector(
+		LocalVector.X / (SafeExtent.X * 2.0f),
+		LocalVector.Y / (SafeExtent.Y * 2.0f),
+		LocalVector.Z / (SafeExtent.Z * 2.0f));
+	return VolumeVector.GetSafeNormal(UE_SMALL_NUMBER, Fallback);
+}
 }
 
 AMRBNNVolumeActor::AMRBNNVolumeActor()
@@ -381,6 +413,11 @@ void AMRBNNVolumeActor::OnConstruction(const FTransform& Transform)
 			BuildDensityVolumePreview();
 		}
 		UpdateRelightFromDirectionalLight();
+		EnsureComputeViewExtension();
+		if (!ShouldUseSceneViewExtensionRenderPass())
+		{
+			RenderComputeGlobalShaderPreview();
+		}
 		UpdateVolumeMaterial();
 		UpdateDebugText();
 	}
@@ -395,14 +432,26 @@ void AMRBNNVolumeActor::BeginPlay()
 		ConfigureFromProjectSettings();
 	}
 
-	if (bAutoRenderOnBeginPlay && MRBNNVolume)
+	EnsureComputeViewExtension();
+
+	if (bAutoRenderOnBeginPlay && MRBNNVolume && !bUseComputeGlobalShader)
 	{
 		MRBNNVolume->InitializeRenderer();
 		MRBNNVolume->RenderOnce();
 	}
+	if (!ShouldUseSceneViewExtensionRenderPass())
+	{
+		RenderComputeGlobalShaderPreview();
+	}
 
 	UpdateVolumeMaterial();
 	UpdateDebugText();
+}
+
+void AMRBNNVolumeActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	ComputeViewExtension.Reset();
+	Super::EndPlay(EndPlayReason);
 }
 
 void AMRBNNVolumeActor::Tick(float DeltaSeconds)
@@ -419,6 +468,11 @@ void AMRBNNVolumeActor::Tick(float DeltaSeconds)
 
 	NextPresentationRefreshTimeSeconds = NowSeconds + 0.1;
 	UpdateRelightFromDirectionalLight();
+	EnsureComputeViewExtension();
+	if (!ShouldUseSceneViewExtensionRenderPass())
+	{
+		RenderComputeGlobalShaderPreview();
+	}
 	UpdateVolumeMaterial();
 	UpdateDebugText();
 }
@@ -444,6 +498,11 @@ void AMRBNNVolumeActor::ConfigureFromProjectSettings()
 	BuildRaymarchVolumeTexture();
 	BuildDensityVolumePreview();
 	UpdateRelightFromDirectionalLight();
+	EnsureComputeViewExtension();
+	if (!ShouldUseSceneViewExtensionRenderPass())
+	{
+		RenderComputeGlobalShaderPreview();
+	}
 	UpdateVolumeMaterial();
 	UpdateDebugText();
 }
@@ -499,7 +558,10 @@ bool AMRBNNVolumeActor::RenderPreviewOnce()
 	}
 
 	UpdateRelightFromDirectionalLight();
-	const bool bRendered = MRBNNVolume->RenderOnce();
+	EnsureComputeViewExtension();
+	const bool bRendered = bUseComputeGlobalShader
+		? (ShouldUseSceneViewExtensionRenderPass() || RenderComputeGlobalShaderPreview())
+		: MRBNNVolume->RenderOnce();
 	bEditorPreviewRenderAttempted = true;
 	UpdateVolumeMaterial();
 	UpdateDebugText();
@@ -515,7 +577,9 @@ void AMRBNNVolumeActor::ApplyRealtimePreviewSettings()
 		MRBNNVolume->bRenderEveryTick = false;
 	}
 	bShowVolumeBillboard = false;
-	bUseRaymarchShader = true;
+	bUseComputeGlobalShader = true;
+	bUseSceneViewExtensionRenderPass = true;
+	bUseRaymarchShader = false;
 	bShowDensityVolume = false;
 	bFitDensityPreviewToBounds = true;
 	RaymarchTextureResolution = 80;
@@ -548,6 +612,11 @@ void AMRBNNVolumeActor::ApplyRealtimePreviewSettings()
 	DensityBoundsFill = 0.88f;
 	bEditorPreviewRenderAttempted = false;
 	RebuildVolumeShader();
+	EnsureComputeViewExtension();
+	if (!ShouldUseSceneViewExtensionRenderPass())
+	{
+		RenderComputeGlobalShaderPreview();
+	}
 	RebuildDensityVolumePreview();
 	UpdateVolumeMaterial();
 	UpdateDebugText();
@@ -562,7 +631,9 @@ void AMRBNNVolumeActor::ApplyMobilePreviewSettings()
 		MRBNNVolume->bRenderEveryTick = false;
 	}
 	bShowVolumeBillboard = false;
-	bUseRaymarchShader = true;
+	bUseComputeGlobalShader = true;
+	bUseSceneViewExtensionRenderPass = true;
+	bUseRaymarchShader = false;
 	bShowDensityVolume = false;
 	bFitDensityPreviewToBounds = true;
 	RaymarchTextureResolution = 48;
@@ -595,7 +666,58 @@ void AMRBNNVolumeActor::ApplyMobilePreviewSettings()
 	DensityBoundsFill = 0.86f;
 	bEditorPreviewRenderAttempted = false;
 	RebuildVolumeShader();
+	EnsureComputeViewExtension();
+	if (!ShouldUseSceneViewExtensionRenderPass())
+	{
+		RenderComputeGlobalShaderPreview();
+	}
 	RebuildDensityVolumePreview();
+	UpdateVolumeMaterial();
+	UpdateDebugText();
+}
+
+void AMRBNNVolumeActor::ApplyPaperPreviewSettings()
+{
+	bUseComputeGlobalShader = true;
+	bUseSceneViewExtensionRenderPass = true;
+	bUseRaymarchShader = false;
+	bUseBakedFeatureLighting = true;
+	bUseFallbackPreviewBeforeRender = true;
+	bHideSlicesUntilFirstRender = false;
+	bShowVolumeBillboard = false;
+	bUseExperimentalSliceStack = false;
+	bShowDensityVolume = false;
+	bAutoRenderOnBeginPlay = true;
+	bAllowLiveRenderInEditor = true;
+	bAutoRenderEditorPreviewOnce = true;
+	RaymarchTextureResolution = 96;
+	RaymarchStepCount = 64;
+	RaymarchBakedFeatureLevel = 3;
+	RaymarchBakedFeatureContribution = 0.85f;
+	RaymarchMultiScatterContribution = 1.0f;
+	RaymarchFeatureAlbedoBlend = 0.35f;
+	RaymarchOpacity = 0.052f;
+	RaymarchShadowStrength = 0.62f;
+	RaymarchDirectShadowSteps = 6;
+	PreviewBrightness = 1.65f;
+	AmbientRelight = 0.48f;
+	DirectionalRelight = 0.62f;
+
+	if (MRBNNVolume)
+	{
+		MRBNNVolume->ApplyPaperPreviewSettings();
+		MRBNNVolume->bAutoInitialize = false;
+		MRBNNVolume->bRenderEveryTick = false;
+		MRBNNVolume->bAllowAutomaticRenderInEditor = true;
+	}
+
+	BuildRaymarchVolumeTexture();
+	UpdateRelightFromDirectionalLight();
+	EnsureComputeViewExtension();
+	if (!ShouldUseSceneViewExtensionRenderPass())
+	{
+		RenderComputeGlobalShaderPreview();
+	}
 	UpdateVolumeMaterial();
 	UpdateDebugText();
 }
@@ -759,7 +881,7 @@ bool AMRBNNVolumeActor::BuildRaymarchVolumeTexture()
 {
 	bRaymarchTextureBuilt = true;
 
-	if (!bUseRaymarchShader)
+	if (!bUseRaymarchShader && !bUseComputeGlobalShader)
 	{
 		RaymarchDensityTexture = nullptr;
 		RaymarchFeatureTexture = nullptr;
@@ -875,7 +997,7 @@ bool AMRBNNVolumeActor::BuildRaymarchVolumeTexture()
 	{
 		if (VolumeRaymarchMesh)
 		{
-			VolumeRaymarchMesh->SetVisibility(true, true);
+			VolumeRaymarchMesh->SetVisibility(bUseRaymarchShader, true);
 		}
 		UpdateRaymarchMaterial();
 		return true;
@@ -1147,10 +1269,120 @@ bool AMRBNNVolumeActor::BuildRaymarchVolumeTexture()
 	RaymarchTextureBuildKey = BuildKey;
 	if (VolumeRaymarchMesh)
 	{
-		VolumeRaymarchMesh->SetVisibility(true, true);
+		VolumeRaymarchMesh->SetVisibility(bUseRaymarchShader, true);
 	}
 	UpdateRaymarchMaterial();
 	return true;
+}
+
+FMRBNNComputeVolumeSettings AMRBNNVolumeActor::MakeComputeVolumeSettings() const
+{
+	FMRBNNComputeVolumeSettings ComputeSettings;
+	ComputeSettings.StepCount = FMath::Clamp(RaymarchStepCount * 2, 32, 160);
+	ComputeSettings.DirectShadowSteps = FMath::Clamp(RaymarchDirectShadowSteps + 1, 0, 16);
+	ComputeSettings.Opacity = FMath::Max(RaymarchOpacity, 0.0f);
+	ComputeSettings.Ambient = FMath::Max(AmbientRelight, 0.0f);
+	ComputeSettings.Directional = FMath::Max(DirectionalRelight, 0.0f);
+	ComputeSettings.ShadowStrength = FMath::Max(RaymarchShadowStrength, 0.0f);
+	ComputeSettings.LightStep = FMath::Max(RaymarchLightStep, 0.001f);
+	ComputeSettings.Brightness = FMath::Max(PreviewBrightness, 0.0f);
+	ComputeSettings.DirectLightIntensity = FMath::Max(CurrentRaymarchDirectLightIntensity, 0.0f);
+	ComputeSettings.DirectShadowDensity = FMath::Max(RaymarchDirectShadowDensity, 0.0f);
+	ComputeSettings.PhaseG = FMath::Clamp(RaymarchPhaseG, -0.85f, 0.85f);
+	ComputeSettings.PhaseStrength = FMath::Clamp(RaymarchPhaseStrength, 0.0f, 1.0f);
+	ComputeSettings.bUseBakedFeatures = bUseBakedFeatureLighting && RaymarchFeatureTexture;
+	ComputeSettings.BakedFeatureContribution = FMath::Clamp(RaymarchBakedFeatureContribution, 0.0f, 2.0f);
+	ComputeSettings.MultiScatterContribution = FMath::Clamp(RaymarchMultiScatterContribution, 0.0f, 2.0f);
+	ComputeSettings.FeatureAlbedoBlend = FMath::Clamp(RaymarchFeatureAlbedoBlend, 0.0f, 1.0f);
+	ComputeSettings.CloudColor = RaymarchCloudColor;
+	ComputeSettings.BakedFeatureTint = RaymarchBakedFeatureTint;
+	return ComputeSettings;
+}
+
+bool AMRBNNVolumeActor::RenderComputeGlobalShaderPreview()
+{
+	if (!bUseComputeGlobalShader || !MRBNNVolume || !RaymarchDensityTexture)
+	{
+		return false;
+	}
+
+	const bool bRendered = MRBNNVolume->RenderComputeVolumeOnce(RaymarchDensityTexture, RaymarchFeatureTexture, MakeComputeVolumeSettings());
+	if (VolumeRaymarchMesh)
+	{
+		VolumeRaymarchMesh->SetVisibility(bUseRaymarchShader && RaymarchMaterialInstance && RaymarchDensityTexture, true);
+	}
+	if (bRendered && !bShowVolumeBillboard)
+	{
+		bShowVolumeBillboard = true;
+	}
+	return bRendered;
+}
+
+bool AMRBNNVolumeActor::BuildComputeRenderDescForView(const FSceneView& View, FMRBNNComputeRenderer::FRenderDesc& OutDesc)
+{
+	if (!bUseComputeGlobalShader || !MRBNNVolume)
+	{
+		return false;
+	}
+
+	if (!RaymarchDensityTexture)
+	{
+		if (bRaymarchTextureBuilt || !BuildRaymarchVolumeTexture())
+		{
+			return false;
+		}
+	}
+
+	UpdateRelightFromDirectionalLight();
+	if (!MRBNNVolume->BuildComputeVolumeRenderDesc(RaymarchDensityTexture, RaymarchFeatureTexture, MakeComputeVolumeSettings(), OutDesc))
+	{
+		return false;
+	}
+
+	const FTransform ActorTransform = GetActorTransform();
+	const FVector CameraPosition = TransformWorldPositionToVolumeUnitBox(ActorTransform, VolumeExtent, View.ViewMatrices.GetViewOrigin());
+	const FVector CameraForward = TransformWorldVectorToVolumeUnitBox(ActorTransform, VolumeExtent, View.GetViewDirection(), FVector(1.0f, 0.0f, 0.0f));
+	const FVector CameraRight = TransformWorldVectorToVolumeUnitBox(ActorTransform, VolumeExtent, View.GetViewRight(), FVector(0.0f, 1.0f, 0.0f));
+	const FVector CameraUp = TransformWorldVectorToVolumeUnitBox(ActorTransform, VolumeExtent, View.GetViewUp(), FVector(0.0f, 0.0f, 1.0f));
+	const FVector LightDirection = TransformWorldVectorToVolumeUnitBox(
+		ActorTransform,
+		VolumeExtent,
+		ActorTransform.TransformVectorNoScale(MRBNNVolume->RenderSettings.LightDirection),
+		FVector(0.35f, 0.7f, 0.62f).GetSafeNormal());
+	const FVector2f TanHalfFov = View.ViewMatrices.GetTanHalfFov();
+
+	OutDesc.CameraPosition = FVector3f(CameraPosition);
+	OutDesc.CameraForward = FVector3f(CameraForward);
+	OutDesc.CameraRight = FVector3f(CameraRight);
+	OutDesc.CameraUp = FVector3f(CameraUp);
+	OutDesc.TanHalfFov = FVector2f(FMath::Max(TanHalfFov.X, 0.001f), FMath::Max(TanHalfFov.Y, 0.001f));
+	OutDesc.RenderSettings.CameraPosition = CameraPosition;
+	OutDesc.RenderSettings.LightDirection = LightDirection;
+	OutDesc.bUseExplicitCamera = true;
+	return true;
+}
+
+void AMRBNNVolumeActor::EnsureComputeViewExtension()
+{
+	if (HasAnyFlags(RF_ClassDefaultObject) || !ShouldUseSceneViewExtensionRenderPass())
+	{
+		ComputeViewExtension.Reset();
+		return;
+	}
+
+	if (!ComputeViewExtension.IsValid())
+	{
+		ComputeViewExtension = FSceneViewExtensions::NewExtension<FMRBNNSceneViewExtension>(TWeakObjectPtr<AMRBNNVolumeActor>(this));
+	}
+	else
+	{
+		ComputeViewExtension->SetActor(TWeakObjectPtr<AMRBNNVolumeActor>(this));
+	}
+}
+
+bool AMRBNNVolumeActor::ShouldUseSceneViewExtensionRenderPass() const
+{
+	return bUseComputeGlobalShader && bUseSceneViewExtensionRenderPass;
 }
 
 bool AMRBNNVolumeActor::BuildDensityVolumePreview()
@@ -1658,9 +1890,11 @@ void AMRBNNVolumeActor::UpdateDebugText()
 	if (MRBNNVolume)
 	{
 		Summary = FString::Printf(
-			TEXT("MRBNN Volume\nPreview=%s  Display=%s  Raymarch=%s %d^3/%d steps  Features=%s  Voxels=%d\nExtent=(%.0f %.0f %.0f)\n%s\nLastError: %s"),
+			TEXT("MRBNN Volume\nPreview=%s  Display=%s  Compute=%s  Pass=%s  VolumeTex=%s %d^3/%d steps  Features=%s  Voxels=%d\nExtent=(%.0f %.0f %.0f)\n%s\nLastError: %s"),
 			HasRenderedPreviewTexture() ? TEXT("live") : TEXT("fallback"),
-			bUseRaymarchShader ? TEXT("volume shader") : (bShowDensityVolume ? TEXT("density voxels") : (bUseExperimentalSliceStack ? TEXT("experimental slices") : TEXT("billboard"))),
+			bUseComputeGlobalShader ? TEXT("compute output") : (bUseRaymarchShader ? TEXT("volume material") : (bShowDensityVolume ? TEXT("density voxels") : (bUseExperimentalSliceStack ? TEXT("experimental slices") : TEXT("billboard")))),
+			bUseComputeGlobalShader ? TEXT("global shader") : TEXT("off"),
+			ShouldUseSceneViewExtensionRenderPass() ? TEXT("SceneViewExtension") : TEXT("manual"),
 			RaymarchDensityTexture ? TEXT("ready") : TEXT("missing"),
 			RaymarchDensityTexture ? RaymarchDensityTexture->GetSizeX() : 0,
 			FMath::Clamp(RaymarchStepCount, 4, 96),
@@ -1690,7 +1924,18 @@ void AMRBNNVolumeActor::MaybeRenderEditorPreviewOnce()
 
 	UpdateRelightFromDirectionalLight();
 	bEditorPreviewRenderAttempted = true;
-	MRBNNVolume->RenderOnce();
+	EnsureComputeViewExtension();
+	if (bUseComputeGlobalShader)
+	{
+		if (!ShouldUseSceneViewExtensionRenderPass())
+		{
+			RenderComputeGlobalShaderPreview();
+		}
+	}
+	else
+	{
+		MRBNNVolume->RenderOnce();
+	}
 }
 
 bool AMRBNNVolumeActor::HasRenderedPreviewTexture() const

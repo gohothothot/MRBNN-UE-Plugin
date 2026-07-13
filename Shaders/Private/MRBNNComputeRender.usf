@@ -1,0 +1,239 @@
+#include "/Engine/Public/Platform.ush"
+
+Texture3D<float4> DensityTexture;
+Texture3D<float4> FeatureTexture;
+SamplerState VolumeSampler;
+RWTexture2D<float4> OutputTexture;
+
+int2 OutputSize;
+float3 CameraPosition;
+float3 CameraForward;
+float3 CameraRight;
+float3 CameraUp;
+float2 TanHalfFov;
+float3 LightDirection;
+float4 LightColor;
+float4 Albedo;
+float4 CloudColor;
+float4 BakedFeatureTint;
+int StepCount;
+int DirectShadowSteps;
+int bUseBakedFeatures;
+int bUseExplicitCamera;
+int bCompositeOutput;
+int FrameIndex;
+float Opacity;
+float Ambient;
+float Directional;
+float ShadowStrength;
+float LightStep;
+float Brightness;
+float DirectLightIntensity;
+float DirectShadowDensity;
+float PhaseG;
+float PhaseStrength;
+float BakedFeatureContribution;
+float MultiScatterContribution;
+float FeatureAlbedoBlend;
+
+static const float PI = 3.14159265359f;
+
+float Hash12(float2 p)
+{
+	float3 p3 = frac(float3(p.xyx) * 0.1031f);
+	p3 += dot(p3, p3.yzx + 33.33f);
+	return frac((p3.x + p3.y) * p3.z);
+}
+
+bool RayBox(float3 origin, float3 direction, out float nearT, out float farT)
+{
+	float3 safeDir = direction;
+	safeDir.x = abs(direction.x) > 1.0e-5f ? direction.x : (direction.x >= 0.0f ? 1.0e-5f : -1.0e-5f);
+	safeDir.y = abs(direction.y) > 1.0e-5f ? direction.y : (direction.y >= 0.0f ? 1.0e-5f : -1.0e-5f);
+	safeDir.z = abs(direction.z) > 1.0e-5f ? direction.z : (direction.z >= 0.0f ? 1.0e-5f : -1.0e-5f);
+	float3 invDir = rcp(safeDir);
+	float3 t0 = (-0.5f - origin) * invDir;
+	float3 t1 = ( 0.5f - origin) * invDir;
+	float3 tmin = min(t0, t1);
+	float3 tmax = max(t0, t1);
+	nearT = max(max(tmin.x, tmin.y), tmin.z);
+	farT = min(min(tmax.x, tmax.y), tmax.z);
+	return farT > max(nearT, 0.0f);
+}
+
+float HenyeyGreenstein(float cosTheta, float g)
+{
+	float g2 = g * g;
+	float denom = max(1.0f + g2 - 2.0f * g * cosTheta, 1.0e-3f);
+	return (1.0f - g2) / (4.0f * PI * denom * sqrt(denom));
+}
+
+float SampleDensity(float3 p)
+{
+	float3 uvw = saturate(p + 0.5f);
+	return DensityTexture.SampleLevel(VolumeSampler, uvw, 0).r;
+}
+
+float4 SampleFeature(float3 p)
+{
+	float3 uvw = saturate(p + 0.5f);
+	return FeatureTexture.SampleLevel(VolumeSampler, uvw, 0);
+}
+
+float EstimateLightVisibility(float3 p, float3 lightDir)
+{
+	float visibility = 1.0f;
+	float3 marchP = p;
+	[loop]
+	for (int i = 0; i < DirectShadowSteps; ++i)
+	{
+		marchP += lightDir * LightStep;
+		if (any(marchP < -0.5f) || any(marchP > 0.5f))
+		{
+			break;
+		}
+
+		float d = SampleDensity(marchP);
+		visibility *= exp(-d * DirectShadowDensity * ShadowStrength);
+	}
+	return saturate(visibility);
+}
+
+float3 DecodeFeatureLighting(float4 feature, float density, float phase)
+{
+	if (bUseBakedFeatures == 0)
+	{
+		return 0.0f;
+	}
+
+	float baseEnergy = feature.r;
+	float multiScatter = feature.g;
+	float anisotropy = feature.b;
+	float confidence = max(feature.a, density);
+	float featureLift = baseEnergy * BakedFeatureContribution + multiScatter * MultiScatterContribution;
+	float warmScatter = saturate(featureLift * confidence);
+	float directionalMemory = lerp(1.0f, 1.0f + anisotropy * 1.8f, PhaseStrength) * phase;
+	return BakedFeatureTint.rgb * warmScatter * directionalMemory;
+}
+
+[numthreads(8, 8, 1)]
+void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	if (DispatchThreadId.x >= OutputSize.x || DispatchThreadId.y >= OutputSize.y)
+	{
+		return;
+	}
+
+	float2 pixel = float2(DispatchThreadId.xy) + 0.5f;
+	float2 uv = pixel / max(float2(OutputSize), 1.0f);
+	float2 ndc = uv * 2.0f - 1.0f;
+	ndc.y = -ndc.y;
+
+	float3 camera = CameraPosition;
+	float3 rayDir = 0.0f;
+	if (bUseExplicitCamera != 0)
+	{
+		camera = CameraPosition;
+		float2 safeTanHalfFov = max(TanHalfFov, 0.001f);
+		rayDir = normalize(
+			normalize(CameraForward) +
+			normalize(CameraRight) * ndc.x * safeTanHalfFov.x +
+			normalize(CameraUp) * ndc.y * safeTanHalfFov.y);
+	}
+	else if (length(camera) < 1.25f)
+	{
+		float orbit = 0.38f + (float)(FrameIndex & 15) * 0.0025f;
+		camera = normalize(float3(0.72f + orbit, -0.34f, 0.38f)) * 1.85f;
+	}
+	else
+	{
+		camera = normalize(camera) * max(length(camera), 1.65f);
+	}
+
+	if (bUseExplicitCamera == 0)
+	{
+		float3 target = float3(0.0f, 0.0f, 0.02f);
+		float3 forward = normalize(target - camera);
+		float3 worldUp = abs(forward.z) > 0.92f ? float3(0.0f, 1.0f, 0.0f) : float3(0.0f, 0.0f, 1.0f);
+		float3 right = normalize(cross(worldUp, forward));
+		float3 up = normalize(cross(forward, right));
+		float aspect = (float)OutputSize.x / max((float)OutputSize.y, 1.0f);
+		float tanHalfFov = 0.48f;
+		rayDir = normalize(forward + right * ndc.x * aspect * tanHalfFov + up * ndc.y * tanHalfFov);
+	}
+
+	float nearT = 0.0f;
+	float farT = 0.0f;
+	float3 sky = float3(0.025f, 0.035f, 0.052f) + float3(0.10f, 0.12f, 0.16f) * saturate(uv.y);
+	if (!RayBox(camera, rayDir, nearT, farT))
+	{
+		OutputTexture[DispatchThreadId.xy] = bCompositeOutput != 0 ? float4(0.0f, 0.0f, 0.0f, 0.0f) : float4(sky, 1.0f);
+		return;
+	}
+
+	nearT = max(nearT, 0.0f);
+	int steps = clamp(StepCount, 4, 192);
+	float rayLength = farT - nearT;
+	float dt = rayLength / (float)steps;
+	float jitter = Hash12(pixel + (float)FrameIndex * 13.17f);
+	float t = nearT + dt * jitter;
+	float transmittance = 1.0f;
+	float3 radiance = 0.0f;
+	float3 lightDir = normalize(LightDirection);
+	float phaseForward = HenyeyGreenstein(dot(rayDir, lightDir), clamp(PhaseG, -0.85f, 0.85f));
+	float phaseNormalized = lerp(1.0f, phaseForward * 8.0f, PhaseStrength);
+
+	[loop]
+	for (int stepIndex = 0; stepIndex < steps; ++stepIndex)
+	{
+		float3 p = camera + rayDir * t;
+		float density = SampleDensity(p);
+		if (density > 0.001f)
+		{
+			float4 feature = SampleFeature(p);
+			float visibility = EstimateLightVisibility(p, lightDir);
+			float3 baseAlbedo = lerp(CloudColor.rgb, Albedo.rgb, FeatureAlbedoBlend);
+			float direct = Directional * DirectLightIntensity * visibility * phaseNormalized;
+			float3 lighting = baseAlbedo * LightColor.rgb * (Ambient + direct);
+			lighting += DecodeFeatureLighting(feature, density, phaseNormalized);
+
+			float alpha = 1.0f - exp(-density * max(Opacity, 0.0f) * dt * 70.0f);
+			alpha = saturate(alpha);
+			radiance += transmittance * alpha * lighting;
+			transmittance *= 1.0f - alpha;
+			if (transmittance < 0.01f)
+			{
+				break;
+			}
+		}
+		t += dt;
+	}
+
+	float cloudAlpha = saturate(1.0f - transmittance);
+	float3 color = bCompositeOutput != 0 ? radiance * Brightness : radiance * Brightness + sky * transmittance;
+	color = max(color, 0.0f);
+	color = color * (2.51f * color + 0.03f) / max(color * (2.43f * color + 0.59f) + 0.14f, 1.0e-3f);
+	OutputTexture[DispatchThreadId.xy] = float4(saturate(color), bCompositeOutput != 0 ? cloudAlpha : 1.0f);
+}
+
+Texture2D<float4> SceneColorTexture;
+Texture2D<float4> CloudTexture;
+SamplerState CompositeSampler;
+RWTexture2D<float4> CompositeOutputTexture;
+int2 CompositeOutputSize;
+float CompositeStrength;
+
+[numthreads(8, 8, 1)]
+void MainCompositeCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	if (DispatchThreadId.x >= CompositeOutputSize.x || DispatchThreadId.y >= CompositeOutputSize.y)
+	{
+		return;
+	}
+
+	float2 uv = (float2(DispatchThreadId.xy) + 0.5f) / max(float2(CompositeOutputSize), 1.0f);
+	float4 sceneColor = SceneColorTexture.SampleLevel(CompositeSampler, uv, 0);
+	float4 cloud = CloudTexture.SampleLevel(CompositeSampler, uv, 0);
+	float alpha = saturate(cloud.a * CompositeStrength);
+	CompositeOutputTexture[DispatchThreadId.xy] = float4(lerp(sceneColor.rgb, cloud.rgb, alpha), sceneColor.a);
+}

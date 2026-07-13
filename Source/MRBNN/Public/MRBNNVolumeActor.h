@@ -2,9 +2,12 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "MRBNNComputeRenderer.h"
 #include "MRBNNVolumeActor.generated.h"
 
 class ADirectionalLight;
+class FMRBNNSceneViewExtension;
+class FSceneView;
 class UBoxComponent;
 class UHierarchicalInstancedStaticMeshComponent;
 class UInstancedStaticMeshComponent;
@@ -20,12 +23,14 @@ UCLASS(BlueprintType, Blueprintable)
 class MRBNN_API AMRBNNVolumeActor : public AActor
 {
 	GENERATED_BODY()
+	friend class FMRBNNSceneViewExtension;
 
 public:
 	AMRBNNVolumeActor();
 
 	virtual void OnConstruction(const FTransform& Transform) override;
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void Tick(float DeltaSeconds) override;
 	virtual bool ShouldTickIfViewportsOnly() const override { return true; }
 
@@ -78,7 +83,13 @@ public:
 	bool bShowVolumeBillboard = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Volume")
-	bool bUseRaymarchShader = true;
+	bool bUseComputeGlobalShader = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Volume", meta = (EditCondition = "bUseComputeGlobalShader"))
+	bool bUseSceneViewExtensionRenderPass = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Volume", meta = (AdvancedDisplay))
+	bool bUseRaymarchShader = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Volume")
 	bool bShowDensityVolume = false;
@@ -221,6 +232,9 @@ public:
 	UFUNCTION(BlueprintCallable, CallInEditor, Category = "MRBNN|Quality")
 	void ResetAccumulation();
 
+	UFUNCTION(BlueprintCallable, CallInEditor, Category = "MRBNN|Quality")
+	void ApplyPaperPreviewSettings();
+
 	UFUNCTION(BlueprintCallable, CallInEditor, Category = "MRBNN|Volume")
 	bool RebuildDensityVolumePreview();
 
@@ -231,6 +245,11 @@ protected:
 	void UpdateVolumeProxy();
 	bool BuildDensityVolumePreview();
 	bool BuildRaymarchVolumeTexture();
+	bool RenderComputeGlobalShaderPreview();
+	bool BuildComputeRenderDescForView(const FSceneView& View, FMRBNNComputeRenderer::FRenderDesc& OutDesc);
+	FMRBNNComputeVolumeSettings MakeComputeVolumeSettings() const;
+	void EnsureComputeViewExtension();
+	bool ShouldUseSceneViewExtensionRenderPass() const;
 	void UpdateRelightFromDirectionalLight();
 	void UpdateVolumeMaterial();
 	void UpdateRaymarchMaterial();
@@ -264,6 +283,7 @@ protected:
 	UPROPERTY(Transient)
 	TObjectPtr<UTexture> FallbackPreviewTexture;
 
+	TSharedPtr<FMRBNNSceneViewExtension, ESPMode::ThreadSafe> ComputeViewExtension;
 	FString RaymarchTextureBuildKey;
 	double NextPresentationRefreshTimeSeconds = 0.0;
 	FLinearColor CurrentRaymarchDirectLightColor = FLinearColor::White;

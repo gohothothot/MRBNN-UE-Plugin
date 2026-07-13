@@ -107,7 +107,15 @@ def setup_current_level():
         "MRBNNVolume",
     )
     volume.set_editor_property("directional_light_actor", sun)
+    volume.set_editor_property("use_compute_global_shader", True)
+    volume.set_editor_property("use_scene_view_extension_render_pass", True)
+    volume.set_editor_property("use_raymarch_shader", False)
     volume.configure_from_project_settings()
+    volume.apply_paper_preview_settings()
+    volume.set_editor_property("use_compute_global_shader", True)
+    volume.set_editor_property("use_scene_view_extension_render_pass", True)
+    volume.set_editor_property("use_raymarch_shader", False)
+    volume.set_editor_property("show_volume_billboard", False)
 
 
 def main():

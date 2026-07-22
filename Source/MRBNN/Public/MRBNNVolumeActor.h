@@ -114,6 +114,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Density", meta = (DisplayName = "Cloud Color"))
 	FLinearColor RaymarchCloudColor = FLinearColor(0.86f, 0.90f, 0.92f, 1.0f);
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Cloud Shape", meta = (DisplayName = "Cloud Flow Direction"))
+	FVector RaymarchCloudFlowDirection = FVector(1.0, 0.15, 0.0);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Cloud Shape", meta = (ClampMin = "0.0", ClampMax = "0.25", UIMin = "0.0", UIMax = "0.08", DisplayName = "Cloud Flow Speed"))
+	float RaymarchCloudFlowSpeed = 0.0f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Quality", meta = (ClampMin = "4", ClampMax = "96", UIMin = "16", UIMax = "64", DisplayName = "Base Step Count"))
 	int32 RaymarchStepCount = 40;
 
@@ -135,6 +141,24 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Quality", meta = (ClampMin = "0", ClampMax = "4", UIMin = "0", UIMax = "2", DisplayName = "Spatial Denoise Passes"))
 	int32 SpatialDenoisePasses = 0;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Cinematic", meta = (DisplayName = "Use Paper-Style Cinematic Approximation"))
+	bool bUsePaperStyleCinematicPath = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Cinematic", meta = (EditCondition = "bUsePaperStyleCinematicPath", ClampMin = "1", ClampMax = "48", UIMin = "8", UIMax = "32", DisplayName = "Light Optical Depth Steps"))
+	int32 CinematicLightOpticalDepthSteps = 16;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Cinematic", meta = (EditCondition = "bUsePaperStyleCinematicPath", ClampMin = "1", ClampMax = "16", UIMin = "2", UIMax = "8", DisplayName = "Feature In-Scatter Steps"))
+	int32 CinematicInscatterSteps = 4;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Cinematic", meta = (EditCondition = "bUsePaperStyleCinematicPath", ClampMin = "0.1", ClampMax = "4.0", UIMin = "0.5", UIMax = "2.0", DisplayName = "Transmittance Scale"))
+	float CinematicTransmittanceScale = 1.25f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Cinematic", meta = (EditCondition = "bUsePaperStyleCinematicPath", ClampMin = "0.0", ClampMax = "3.0", UIMin = "0.0", UIMax = "2.0", DisplayName = "Multi-Scatter Strength"))
+	float CinematicMultiScatterStrength = 0.9f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Cinematic", meta = (EditCondition = "bUsePaperStyleCinematicPath", ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0", DisplayName = "Baked Feature Participation"))
+	float CinematicFeatureParticipation = 0.75f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Lighting", meta = (DisplayName = "Use Directional Light"))
 	bool bUseDirectionalLightForRelight = true;
 
@@ -152,6 +176,24 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Lighting", meta = (ClampMin = "0.0", UIMin = "0.0", UIMax = "4.0", DisplayName = "Directional Intensity Scale"))
 	float RaymarchDirectLightIntensityScale = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Lighting|Scene", meta = (DisplayName = "Use Bounded Scene Lighting"))
+	bool bUseBoundedSceneLighting = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Lighting|Scene", meta = (EditCondition = "bUseBoundedSceneLighting", ClampMin = "0", ClampMax = "4", UIMin = "0", UIMax = "4", DisplayName = "Max Local Light Samples"))
+	int32 MaxSceneLocalLightSamples = 4;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Lighting|Scene", meta = (EditCondition = "bUseBoundedSceneLighting", ClampMin = "0.0", UIMin = "0.0", UIMax = "0.02", DisplayName = "Local Light Intensity Scale"))
+	float SceneLocalLightIntensityScale = 0.0025f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Lighting|Scene", meta = (EditCondition = "bUseBoundedSceneLighting", ClampMin = "0.0", UIMin = "0.0", UIMax = "2.0", DisplayName = "Sky/Atmosphere Intensity Scale"))
+	float SceneSkyAtmosphereIntensityScale = 0.35f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Lighting|Scene", meta = (EditCondition = "bUseBoundedSceneLighting", ClampMin = "0.0", UIMin = "0.0", UIMax = "4.0", DisplayName = "Fog Contribution Scale"))
+	float SceneFogContributionScale = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Lighting|Scene", meta = (EditCondition = "bUseBoundedSceneLighting", ClampMin = "0.0", ClampMax = "3.0", UIMin = "0.0", UIMax = "2.0", DisplayName = "Scene Color Contribution"))
+	float SceneColorContributionScale = 1.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Lighting", meta = (ClampMin = "0.0", UIMin = "0.0", UIMax = "2.0", DisplayName = "Shadow Strength"))
 	float RaymarchShadowStrength = 0.6f;
@@ -174,6 +216,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Lighting", meta = (ClampMin = "0.0", ClampMax = "2.0", UIMin = "0.0", UIMax = "1.2", DisplayName = "Edge Silver Strength"))
 	float RaymarchEdgeSilverStrength = 0.55f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Lighting", meta = (ClampMin = "0.25", ClampMax = "4.0", UIMin = "0.5", UIMax = "3.0", DisplayName = "Silver Lining Sharpness"))
+	float RaymarchSilverLiningSharpness = 1.2f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Lighting", meta = (ClampMin = "0.0", ClampMax = "2.0", UIMin = "0.0", UIMax = "1.2", DisplayName = "Deep Shadow Strength"))
 	float RaymarchDeepShadowStrength = 0.55f;
 
@@ -191,6 +236,9 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Baked Feature Proxy", meta = (ClampMin = "0.0", ClampMax = "2.0", UIMin = "0.0", UIMax = "1.5", DisplayName = "Multi-Scatter Contribution"))
 	float RaymarchMultiScatterContribution = 0.55f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Baked Feature Proxy", meta = (ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0", DisplayName = "Multi-Scatter Isotropy"))
+	float RaymarchMultiScatterIsotropy = 0.55f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Baked Feature Proxy", meta = (ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0", DisplayName = "Feature Albedo Blend"))
 	float RaymarchFeatureAlbedoBlend = 0.18f;
@@ -239,6 +287,7 @@ protected:
 	bool RenderComputeGlobalShaderPreview();
 	bool BuildComputeRenderDescForView(const FSceneView& View, FMRBNNComputeRenderer::FRenderDesc& OutDesc);
 	FMRBNNComputeVolumeSettings MakeComputeVolumeSettings() const;
+	void BuildBoundedSceneLightingForView(const FSceneView& View, FMRBNNComputeRenderer::FRenderDesc& InOutDesc);
 	void EnsureComputeViewExtension();
 	bool ShouldUseSceneViewExtensionRenderPass() const;
 	void UpdateRelightFromDirectionalLight();
@@ -264,7 +313,9 @@ protected:
 	FVector LastRelightDirection = FVector::ZeroVector;
 	FLinearColor LastRelightColor = FLinearColor(0.0f, 0.0f, 0.0f, 0.0f);
 	float LastRelightIntensity = -1.0f;
+	uint32 LastSceneLightingHash = 0;
 	bool bHasLastRelightState = false;
+	bool bHasLastSceneLightingState = false;
 	bool bEditorPreviewRenderAttempted = false;
 	bool bDensityPreviewBuilt = false;
 	bool bRaymarchTextureBuilt = false;

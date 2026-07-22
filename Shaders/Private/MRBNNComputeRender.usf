@@ -13,6 +13,13 @@ float3 CameraUp;
 float2 TanHalfFov;
 float3 LightDirection;
 float4 LightColor;
+float4 SceneSkyLightColorAndIntensity;
+float4 SceneFogColorAndDensity;
+float4 SceneAtmosphereParams;
+float4 SceneLightPositionAndInvRadius[4];
+float4 SceneLightColorAndIntensity[4];
+float4 SceneLightDirectionAndSpot[4];
+float4 SceneLightTypeAndShape[4];
 float4 Albedo;
 float4 CloudColor;
 float4 BakedFeatureTint;
@@ -21,7 +28,11 @@ int DirectShadowSteps;
 int bUseBakedFeatures;
 int bUseExplicitCamera;
 int bCompositeOutput;
+int bUsePaperStyleCinematic;
+int CinematicLightOpticalDepthSteps;
+int CinematicInscatterSteps;
 int FrameIndex;
+int SceneLightCount;
 float Opacity;
 float Ambient;
 float Directional;
@@ -37,7 +48,14 @@ float DeepShadowStrength;
 float PowderStrength;
 float BakedFeatureContribution;
 float MultiScatterContribution;
+float MultiScatterIsotropy;
+float SilverLiningSharpness;
+float SceneColorContribution;
+float4 CloudFlowDirectionAndSpeed;
 float FeatureAlbedoBlend;
+float CinematicTransmittanceScale;
+float CinematicMultiScatterStrength;
+float CinematicFeatureParticipation;
 
 static const float PI = 3.14159265359f;
 
@@ -71,21 +89,69 @@ float HenyeyGreenstein(float cosTheta, float g)
 	return (1.0f - g2) / (4.0f * PI * denom * sqrt(denom));
 }
 
+float3 ApplyCloudFlow(float3 p)
+{
+	float flowSpeed = max(CloudFlowDirectionAndSpeed.w, 0.0f);
+	if (flowSpeed <= 1.0e-5f)
+	{
+		return p;
+	}
+
+	float3 flowDir = dot(CloudFlowDirectionAndSpeed.xyz, CloudFlowDirectionAndSpeed.xyz) > 1.0e-5f
+		? normalize(CloudFlowDirectionAndSpeed.xyz)
+		: float3(1.0f, 0.0f, 0.0f);
+	float timeSeconds = (float)FrameIndex / 60.0f;
+	float drift = flowSpeed * timeSeconds;
+	float ripple = sin(dot(p, float3(6.0f, 3.0f, 4.0f)) + timeSeconds * 1.7f) * flowSpeed * 0.18f;
+	float3 sideDir = normalize(abs(flowDir.z) < 0.85f ? cross(flowDir, float3(0.0f, 0.0f, 1.0f)) : cross(flowDir, float3(0.0f, 1.0f, 0.0f)));
+	float3 uvw = p + 0.5f - flowDir * drift + sideDir * ripple;
+	return frac(uvw) - 0.5f;
+}
+
 float SampleDensity(float3 p)
 {
-	float3 uvw = saturate(p + 0.5f);
+	float3 uvw = saturate(ApplyCloudFlow(p) + 0.5f);
 	return DensityTexture.SampleLevel(VolumeSampler, uvw, 0).r;
 }
 
 float4 SampleFeature(float3 p)
 {
-	float3 uvw = saturate(p + 0.5f);
+	float3 uvw = saturate(ApplyCloudFlow(p) + 0.5f);
 	return FeatureTexture.SampleLevel(VolumeSampler, uvw, 0);
 }
 
 float EstimateLightVisibility(float3 p, float3 lightDir)
 {
 	float visibility = 1.0f;
+	if (bUsePaperStyleCinematic != 0)
+	{
+		// Paper-style approximation: use negative-log optical depth and exp(-tau), not the full baked transmittance map.
+		float nearT = 0.0f;
+		float farT = 0.0f;
+		if (!RayBox(p, lightDir, nearT, farT))
+		{
+			return 1.0f;
+		}
+
+		int opticalDepthSteps = clamp(CinematicLightOpticalDepthSteps, 1, 48);
+		float stepLength = max(farT, 0.0f) / (float)opticalDepthSteps;
+		float tau = 0.0f;
+		[loop]
+		for (int i = 0; i < opticalDepthSteps; ++i)
+		{
+			float3 sampleP = p + lightDir * ((float)i + 0.5f) * stepLength;
+			if (any(sampleP < -0.5f) || any(sampleP > 0.5f))
+			{
+				break;
+			}
+			tau += SampleDensity(sampleP) * stepLength;
+		}
+
+		tau *= DirectShadowDensity * ShadowStrength * max(CinematicTransmittanceScale, 0.1f) * 70.0f;
+		visibility = exp(-tau);
+		return saturate(visibility);
+	}
+
 	float3 marchP = p;
 	[loop]
 	for (int i = 0; i < DirectShadowSteps; ++i)
@@ -102,6 +168,12 @@ float EstimateLightVisibility(float3 p, float3 lightDir)
 	return saturate(visibility);
 }
 
+float PaperFeatureDeltaStep(int stepCount, float tExit)
+{
+	float totalDiv = 1.01f * max(exp2((float)(stepCount - 1)) - 1.0f, 1.0f);
+	return tExit / totalDiv;
+}
+
 float3 DecodeFeatureLighting(float4 feature, float density, float phase)
 {
 	float enabled = bUseBakedFeatures != 0 ? 1.0f : 0.0f;
@@ -110,10 +182,131 @@ float3 DecodeFeatureLighting(float4 feature, float density, float phase)
 	float anisotropy = feature.b;
 	float confidence = max(feature.a, density);
 	float featureLift = baseEnergy * BakedFeatureContribution + multiScatter * MultiScatterContribution;
+	float isotropy = saturate(MultiScatterIsotropy);
 	float warmScatter = saturate(featureLift * (0.5f + confidence * 0.85f));
-	float directionalMemory = lerp(1.0f, 1.0f + anisotropy * 1.55f, PhaseStrength) * phase;
-	float softInteriorLift = lerp(0.75f, 1.08f, confidence);
+	float directionalFeature = lerp(1.0f, 1.0f + anisotropy * 1.55f, PhaseStrength * (1.0f - isotropy * 0.75f));
+	float phaseMemory = lerp(phase, 1.0f, isotropy);
+	float softInteriorLift = lerp(0.75f, 1.16f, confidence) * (1.0f + multiScatter * isotropy * 0.55f);
+	float directionalMemory = directionalFeature * phaseMemory;
 	return BakedFeatureTint.rgb * warmScatter * directionalMemory * softInteriorLift * enabled;
+}
+
+float3 EstimatePaperStyleFeatureInscatter(float3 p, float3 rayDir, float3 lightDir, float3 baseAlbedo, float4 centerFeature, float density, float phase, float visibility)
+{
+	// Seeds isotropic multi-scatter from the existing RGBA proxy feature texture; this is not TinyRPNNInference.
+	int featureSteps = clamp(CinematicInscatterSteps, 1, 16);
+	float nearT = 0.0f;
+	float farT = 0.0f;
+	if (!RayBox(p, lightDir, nearT, farT))
+	{
+		return 0.0f;
+	}
+
+	float deltaStep = max(PaperFeatureDeltaStep(featureSteps, max(farT, LightStep)), 1.0e-4f);
+	float3 sampleP = p;
+	float opticalDepth = 0.0f;
+	float weightSum = 0.0f;
+	float3 inscatter = 0.0f;
+	float featureEnabled = bUseBakedFeatures != 0 ? 1.0f : 0.0f;
+	float featureParticipation = featureEnabled * saturate(CinematicFeatureParticipation);
+	float viewScatter = 0.5f + 0.5f * saturate(dot(-rayDir, lightDir));
+	float isotropicPhase = 1.0f / (4.0f * PI);
+	float isotropy = saturate(MultiScatterIsotropy);
+
+	[loop]
+	for (int i = 0; i < featureSteps; ++i)
+	{
+		if (any(sampleP < -0.5f) || any(sampleP > 0.5f))
+		{
+			break;
+		}
+
+		float sampleDensity = SampleDensity(sampleP);
+		float4 sampleFeature = featureEnabled > 0.0f ? SampleFeature(sampleP) : centerFeature;
+		float baseEnergy = lerp(density, sampleFeature.r, featureParticipation);
+		float multiScatterEnergy = lerp(sampleDensity, sampleFeature.g, featureParticipation);
+		float confidence = max(max(centerFeature.a, sampleFeature.a), sampleDensity);
+		float sampleWeight = saturate(baseEnergy * BakedFeatureContribution + multiScatterEnergy * MultiScatterContribution);
+		opticalDepth += sampleDensity * deltaStep * DirectShadowDensity * max(CinematicTransmittanceScale, 0.1f) * 70.0f;
+		float transmittance = exp(-opticalDepth);
+		float phaseMix = lerp(isotropicPhase, phase, lerp(0.35f, 0.08f, isotropy)) * (0.72f + 0.28f * viewScatter);
+		inscatter += BakedFeatureTint.rgb * baseAlbedo * sampleWeight * confidence * transmittance * phaseMix;
+		weightSum += transmittance;
+
+		sampleP += lightDir * deltaStep;
+		deltaStep += deltaStep;
+	}
+
+	float3 normalizedInscatter = weightSum > 1.0e-4f ? inscatter / weightSum : 0.0f;
+	float centerSeed = saturate(centerFeature.r * BakedFeatureContribution + centerFeature.g * MultiScatterContribution);
+	normalizedInscatter += BakedFeatureTint.rgb * baseAlbedo * centerSeed * isotropicPhase * featureParticipation * (1.0f + centerFeature.g * isotropy);
+	return normalizedInscatter * CinematicMultiScatterStrength * (0.35f + 0.65f * visibility) * (1.0f + isotropy * 0.45f);
+}
+
+float3 EstimateBoundedSceneLighting(float3 p, float3 rayDir, float3 baseAlbedo, float density, float phase)
+{
+	float3 localLighting = 0.0f;
+	int boundedLightCount = clamp(SceneLightCount, 0, 4);
+
+	[unroll]
+	for (int lightIndex = 0; lightIndex < 4; ++lightIndex)
+	{
+		if (lightIndex >= boundedLightCount)
+		{
+			continue;
+		}
+
+		float4 positionAndInvRadius = SceneLightPositionAndInvRadius[lightIndex];
+		float4 lightColorAndIntensity = SceneLightColorAndIntensity[lightIndex];
+		float4 directionAndSpot = SceneLightDirectionAndSpot[lightIndex];
+		float4 typeAndShape = SceneLightTypeAndShape[lightIndex];
+		float3 toLight = positionAndInvRadius.xyz - p;
+		float distSq = max(dot(toLight, toLight), 1.0e-5f);
+		float dist = sqrt(distSq);
+		float3 sampleToLight = toLight / dist;
+		float attenuation = saturate(1.0f - dist * max(positionAndInvRadius.w, 0.0f));
+		attenuation *= attenuation;
+
+		float type = typeAndShape.x;
+		float shapeWeight = 1.0f;
+		if (type > 1.5f && type < 2.5f)
+		{
+			float3 lightToSample = -sampleToLight;
+			float outerCos = clamp(directionAndSpot.w, -0.99f, 0.999f);
+			float innerCos = lerp(outerCos, 0.999f, saturate(typeAndShape.y));
+			shapeWeight = smoothstep(outerCos, innerCos, dot(lightToSample, normalize(directionAndSpot.xyz)));
+		}
+		else if (type > 2.5f)
+		{
+			float3 lightToSample = -sampleToLight;
+			float facing = saturate(dot(lightToSample, normalize(directionAndSpot.xyz)));
+			float areaRadius = max(typeAndShape.y + typeAndShape.z, 1.0e-3f);
+			shapeWeight = facing * (1.0f + saturate(areaRadius * 8.0f) * 0.35f);
+		}
+
+		float localPhase = lerp(1.0f, HenyeyGreenstein(dot(rayDir, sampleToLight), clamp(PhaseG, -0.85f, 0.85f)) * 8.0f, PhaseStrength);
+		float localPowder = 0.35f + 0.65f * (1.0f - exp(-density * 6.0f));
+		float3 localEnergy = max(lightColorAndIntensity.rgb, 0.0f) * max(lightColorAndIntensity.a, 0.0f);
+		localLighting += baseAlbedo * localEnergy * attenuation * shapeWeight * localPhase * localPowder;
+	}
+
+	return localLighting;
+}
+
+float3 EstimateSceneAmbientLighting(float density, float pathDepth)
+{
+	float contribution = max(SceneColorContribution, 0.0f);
+	if (contribution <= 1.0e-4f)
+	{
+		return 0.0f;
+	}
+
+	float3 skyLight = max(SceneSkyLightColorAndIntensity.rgb, 0.0f) * max(SceneSkyLightColorAndIntensity.a, 0.0f);
+	float atmosphereLift = saturate((SceneAtmosphereParams.x * 0.35f + SceneAtmosphereParams.y * 0.45f + SceneAtmosphereParams.z * 0.25f) * (0.45f + pathDepth));
+	float3 atmosphereTint = skyLight * atmosphereLift;
+	float fogWeight = saturate(SceneFogColorAndDensity.a * (0.3f + density * 2.4f + pathDepth));
+	float3 fogTint = max(SceneFogColorAndDensity.rgb, 0.0f) * fogWeight;
+	return (skyLight * (0.2f + pathDepth * 0.25f) + atmosphereTint * (1.0f + pathDepth * 0.75f) + fogTint * (0.65f + pathDepth * 0.35f)) * contribution;
 }
 
 [numthreads(8, 8, 1)]
@@ -184,6 +377,7 @@ void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	float3 lightDir = normalize(LightDirection);
 	float phaseForward = HenyeyGreenstein(dot(rayDir, lightDir), clamp(PhaseG, -0.85f, 0.85f));
 	float phaseNormalized = lerp(1.0f, phaseForward * 8.0f, PhaseStrength);
+	float paperPhase = phaseForward * (bUsePaperStyleCinematic != 0 ? 12.0f : 8.0f);
 
 	[loop]
 	for (int stepIndex = 0; stepIndex < steps; ++stepIndex)
@@ -201,16 +395,25 @@ void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 			float powder = 1.0f - exp(-density * 8.0f);
 			float ambientOcclusion = lerp(1.0f, 0.58f + featureConfidence * 0.22f, deepOcclusion);
 			float directOcclusion = lerp(1.0f, 0.50f + powder * 0.65f, deepOcclusion * saturate(PowderStrength));
-			float direct = Directional * DirectLightIntensity * visibility * phaseNormalized * directOcclusion;
+			float directPhase = bUsePaperStyleCinematic != 0 ? paperPhase : phaseNormalized;
+			float direct = Directional * DirectLightIntensity * visibility * directPhase * directOcclusion;
 			float3 lighting = baseAlbedo * LightColor.rgb * (Ambient * ambientOcclusion + direct);
-			float edgeMask = saturate((1.0f - density * 1.15f) * transmittance * 1.35f);
-			float silverPhase = saturate((phaseNormalized - 0.75f) * 0.35f);
-			float silver = EdgeSilverStrength * edgeMask * visibility * silverPhase * (0.35f + 0.65f * powder);
+			lighting += baseAlbedo * EstimateSceneAmbientLighting(density, pathDepth) * ambientOcclusion;
+			lighting += EstimateBoundedSceneLighting(p, rayDir, baseAlbedo, density, phaseNormalized) * (0.45f + 0.55f * visibility);
+			float silverSharpness = max(SilverLiningSharpness, 0.25f);
+			float edgeMask = pow(saturate((1.0f - density * 1.08f) * transmittance * 1.6f), silverSharpness);
+			float silverPhase = pow(saturate((phaseNormalized - 0.72f) * 0.5f), silverSharpness);
+			float silver = EdgeSilverStrength * edgeMask * visibility * silverPhase * (0.45f + 0.75f * powder) * (1.0f + silverSharpness * 0.22f);
 			lighting += LightColor.rgb * BakedFeatureTint.rgb * silver;
 			float3 featureLighting = DecodeFeatureLighting(feature, density, phaseNormalized);
 			lighting += featureLighting * LightColor.rgb * (0.35f + 0.65f * visibility);
+			if (bUsePaperStyleCinematic != 0)
+			{
+				lighting += EstimatePaperStyleFeatureInscatter(p, rayDir, lightDir, baseAlbedo, feature, density, paperPhase, visibility) * LightColor.rgb;
+			}
 
-			float alpha = 1.0f - exp(-density * max(Opacity, 0.0f) * dt * 70.0f);
+			float alphaScale = bUsePaperStyleCinematic != 0 ? max(CinematicTransmittanceScale, 0.1f) : 1.0f;
+			float alpha = 1.0f - exp(-density * max(Opacity, 0.0f) * dt * 70.0f * alphaScale);
 			alpha = saturate(alpha);
 			radiance += transmittance * alpha * lighting;
 			transmittance *= 1.0f - alpha;

@@ -129,6 +129,21 @@ struct MRBNN_API FMRBNNComputeVolumeSettings
 	float MultiScatterContribution = 0.8f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute", meta = (ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
+	float MultiScatterIsotropy = 0.55f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute", meta = (ClampMin = "0.25", ClampMax = "4.0", UIMin = "0.5", UIMax = "3.0"))
+	float SilverLiningSharpness = 1.2f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute", meta = (ClampMin = "0.0", ClampMax = "3.0", UIMin = "0.0", UIMax = "2.0"))
+	float SceneColorContribution = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute")
+	FVector CloudFlowDirection = FVector(1.0, 0.0, 0.0);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute", meta = (ClampMin = "0.0", ClampMax = "0.25", UIMin = "0.0", UIMax = "0.08"))
+	float CloudFlowSpeed = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute", meta = (ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
 	float FeatureAlbedoBlend = 0.25f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute")
@@ -136,4 +151,22 @@ struct MRBNN_API FMRBNNComputeVolumeSettings
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute")
 	FLinearColor BakedFeatureTint = FLinearColor(1.0f, 0.965f, 0.88f, 1.0f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute|Paper-Style Cinematic")
+	bool bUsePaperStyleCinematic = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute|Paper-Style Cinematic", meta = (ClampMin = "1", ClampMax = "48", UIMin = "8", UIMax = "32"))
+	int32 CinematicLightOpticalDepthSteps = 16;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute|Paper-Style Cinematic", meta = (ClampMin = "1", ClampMax = "16", UIMin = "2", UIMax = "8"))
+	int32 CinematicInscatterSteps = 4;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute|Paper-Style Cinematic", meta = (ClampMin = "0.1", ClampMax = "4.0", UIMin = "0.5", UIMax = "2.0"))
+	float CinematicTransmittanceScale = 1.25f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute|Paper-Style Cinematic", meta = (ClampMin = "0.0", ClampMax = "3.0", UIMin = "0.0", UIMax = "2.0"))
+	float CinematicMultiScatterStrength = 0.9f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Compute|Paper-Style Cinematic", meta = (ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
+	float CinematicFeatureParticipation = 0.75f;
 };

@@ -23,61 +23,61 @@ class MRBNN_API UMRBNNVolumeComponent : public UActorComponent
 public:
 	UMRBNNVolumeComponent();
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "MRBNN")
+	UPROPERTY(BlueprintReadOnly, Category = "MRBNN")
 	TObjectPtr<UMRBNNBakedVolumeData> BakedData;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN")
+	UPROPERTY(BlueprintReadWrite, Category = "MRBNN")
 	bool bUseProjectSettingsWhenBakedDataMissing = true;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MRBNN", meta = (ClampMin = "1", UIMin = "64", UIMax = "2048"))
+	UPROPERTY(BlueprintReadOnly, Category = "MRBNN", meta = (ClampMin = "1", UIMin = "64", UIMax = "2048"))
 	int32 OutputWidth = 1024;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MRBNN", meta = (ClampMin = "1", UIMin = "64", UIMax = "2048"))
+	UPROPERTY(BlueprintReadOnly, Category = "MRBNN", meta = (ClampMin = "1", UIMin = "64", UIMax = "2048"))
 	int32 OutputHeight = 1024;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN")
+	UPROPERTY(BlueprintReadWrite, Category = "MRBNN")
 	bool bAutoInitialize = true;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN", meta = (EditCondition = "bAutoInitialize", AdvancedDisplay))
+	UPROPERTY(BlueprintReadWrite, Category = "MRBNN", meta = (EditCondition = "bAutoInitialize", AdvancedDisplay))
 	bool bRetryFailedAutoInitialize = false;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN")
+	UPROPERTY(BlueprintReadWrite, Category = "MRBNN")
 	bool bRenderEveryTick = false;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MRBNN|Quality", meta = (ClampMin = "1", UIMin = "1", UIMax = "64"))
+	UPROPERTY(BlueprintReadOnly, Category = "MRBNN|Quality", meta = (ClampMin = "1", UIMin = "1", UIMax = "64"))
 	int32 SamplesPerRender = 1;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MRBNN|Quality")
+	UPROPERTY(BlueprintReadOnly, Category = "MRBNN|Quality")
 	bool bAccumulateFrames = true;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MRBNN|Quality", meta = (ClampMin = "1", UIMin = "1", UIMax = "512"))
+	UPROPERTY(BlueprintReadOnly, Category = "MRBNN|Quality", meta = (ClampMin = "1", UIMin = "1", UIMax = "512"))
 	int32 MaxAccumulatedFrames = 64;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MRBNN|Quality", meta = (ClampMin = "0", ClampMax = "4", UIMin = "0", UIMax = "2"))
+	UPROPERTY(BlueprintReadOnly, Category = "MRBNN|Quality", meta = (ClampMin = "0", ClampMax = "4", UIMin = "0", UIMax = "2"))
 	int32 SpatialDenoisePasses = 0;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN", meta = (AdvancedDisplay))
+	UPROPERTY(BlueprintReadWrite, Category = "MRBNN", meta = (AdvancedDisplay))
 	bool bAllowAutomaticRenderInEditor = false;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Camera")
+	UPROPERTY(BlueprintReadWrite, Category = "MRBNN|Camera")
 	bool bUsePlayerCamera = true;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Camera", meta = (ClampMin = "0.001", UIMin = "1.0", UIMax = "1000.0"))
+	UPROPERTY(BlueprintReadWrite, Category = "MRBNN|Camera", meta = (ClampMin = "0.001", UIMin = "1.0", UIMax = "1000.0"))
 	float WorldUnitsPerMRBNNUnit = 100.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN")
+	UPROPERTY(BlueprintReadWrite, Category = "MRBNN")
 	FMRBNNRenderSettings RenderSettings;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Material")
+	UPROPERTY(BlueprintReadWrite, Category = "MRBNN|Material")
 	bool bApplyOutputToMaterials = true;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Material", meta = (EditCondition = "bApplyOutputToMaterials"))
+	UPROPERTY(BlueprintReadWrite, Category = "MRBNN|Material", meta = (EditCondition = "bApplyOutputToMaterials"))
 	FName OutputTextureParameterName = TEXT("MRBNNTexture");
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Material", meta = (EditCondition = "bApplyOutputToMaterials"))
+	UPROPERTY(BlueprintReadWrite, Category = "MRBNN|Material", meta = (EditCondition = "bApplyOutputToMaterials"))
 	TArray<TObjectPtr<UPrimitiveComponent>> TargetMaterialComponents;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MRBNN|Material", meta = (EditCondition = "bApplyOutputToMaterials"))
+	UPROPERTY(BlueprintReadWrite, Category = "MRBNN|Material", meta = (EditCondition = "bApplyOutputToMaterials"))
 	bool bUseOwnerPrimitiveComponentsWhenTargetsEmpty = true;
 
 	UPROPERTY(Transient, BlueprintReadOnly, Category = "MRBNN")

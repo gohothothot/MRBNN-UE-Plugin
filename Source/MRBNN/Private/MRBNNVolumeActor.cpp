@@ -6,9 +6,20 @@
 #include "Components/SceneComponent.h"
 #include "Components/BoxComponent.h"
 #include "Components/DirectionalLightComponent.h"
+#include "Components/ExponentialHeightFogComponent.h"
+#include "Components/LightComponent.h"
+#include "Components/LocalLightComponent.h"
+#include "Components/PointLightComponent.h"
+#include "Components/RectLightComponent.h"
+#include "Components/SkyAtmosphereComponent.h"
+#include "Components/SkyLightComponent.h"
+#include "Components/SpotLightComponent.h"
 #include "Dom/JsonObject.h"
 #include "Engine/CollisionProfile.h"
 #include "Engine/DirectionalLight.h"
+#include "Engine/ExponentialHeightFog.h"
+#include "Engine/Light.h"
+#include "Engine/SkyLight.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "Engine/VolumeTexture.h"
 #include "Engine/World.h"
@@ -16,6 +27,7 @@
 #include "HAL/FileManager.h"
 #include "Interfaces/IPluginManager.h"
 #include "Math/Float16.h"
+#include "Misc/Crc.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "MRBNNSceneViewExtension.h"
@@ -322,6 +334,32 @@ FVector3f MakeSourcePositionFromVolumeUnit(
 		UnitToSourceCoordinate(UnitX, SourceMin.X, SourceMax.X),
 		UnitToSourceCoordinate(UnitY, SourceMin.Y, SourceMax.Y),
 		UnitToSourceCoordinate(UnitZ, SourceMin.Z, SourceMax.Z));
+}
+
+struct FMRBNNBoundedSceneLightCandidate
+{
+	FVector4f PositionAndInvRadius = FVector4f::Zero();
+	FVector4f ColorAndIntensity = FVector4f::Zero();
+	FVector4f DirectionAndSpot = FVector4f::Zero();
+	FVector4f TypeAndShape = FVector4f::Zero();
+	float Score = 0.0f;
+};
+
+float GetVolumeRadiusFromWorldRadius(const FVector& VolumeExtent, float WorldRadius)
+{
+	const FVector SafeExtent = GetSafeVolumeExtent(VolumeExtent);
+	const float MaxDiameter = FMath::Max3(SafeExtent.X, SafeExtent.Y, SafeExtent.Z) * 2.0f;
+	return FMath::Max(WorldRadius / FMath::Max(MaxDiameter, 1.0f), 0.001f);
+}
+
+float GetLightLuminance(const FLinearColor& LightColor)
+{
+	return LightColor.R * 0.2126f + LightColor.G * 0.7152f + LightColor.B * 0.0722f;
+}
+
+uint32 HashVector4f(uint32 Seed, const FVector4f& Value)
+{
+	return FCrc::MemCrc32(&Value, sizeof(Value), Seed);
 }
 }
 
@@ -680,12 +718,20 @@ void AMRBNNVolumeActor::ApplyRealtimePreviewSettings()
 	bAccumulateFrames = true;
 	MaxAccumulatedFrames = 12;
 	SpatialDenoisePasses = 0;
+	bUsePaperStyleCinematicPath = false;
+	CinematicLightOpticalDepthSteps = 12;
+	CinematicInscatterSteps = 3;
+	CinematicTransmittanceScale = 1.0f;
+	CinematicMultiScatterStrength = 0.55f;
+	CinematicFeatureParticipation = 0.45f;
 	VolumeExtent = FVector(240.0f, 260.0f, 95.0f);
 	RaymarchTextureResolution = 80;
 	bRaymarchFitToDensityBounds = true;
 	bUseMRBNNCloudAxisMapping = true;
 	RaymarchBoundsThreshold = 1.0f;
 	RaymarchBoundsPadding = 0.14f;
+	RaymarchCloudFlowDirection = FVector(1.0, 0.15, 0.0);
+	RaymarchCloudFlowSpeed = 0.0f;
 	RaymarchStepCount = 40;
 	RaymarchInputThreshold = 4.0f;
 	RaymarchNormalizeDensity = 96.0f;
@@ -699,14 +745,19 @@ void AMRBNNVolumeActor::ApplyRealtimePreviewSettings()
 	RaymarchPhaseG = 0.35f;
 	RaymarchPhaseStrength = 0.75f;
 	RaymarchEdgeSilverStrength = 0.55f;
+	RaymarchSilverLiningSharpness = 1.2f;
 	RaymarchDeepShadowStrength = 0.55f;
 	RaymarchPowderStrength = 0.45f;
 	bUseBakedFeatureLighting = true;
 	RaymarchBakedFeatureLevel = 2;
 	RaymarchBakedFeatureContribution = 0.4f;
 	RaymarchMultiScatterContribution = 0.55f;
+	RaymarchMultiScatterIsotropy = 0.6f;
 	RaymarchFeatureAlbedoBlend = 0.18f;
 	RaymarchBakedFeatureTint = FLinearColor(1.0f, 0.965f, 0.88f, 1.0f);
+	SceneSkyAtmosphereIntensityScale = 0.4f;
+	SceneFogContributionScale = 1.0f;
+	SceneColorContributionScale = 1.0f;
 	AmbientRelight = 0.22f;
 	DirectionalRelight = 1.25f;
 	bEditorPreviewRenderAttempted = false;
@@ -741,12 +792,20 @@ void AMRBNNVolumeActor::ApplyMobilePreviewSettings()
 	bAccumulateFrames = true;
 	MaxAccumulatedFrames = 6;
 	SpatialDenoisePasses = 0;
+	bUsePaperStyleCinematicPath = false;
+	CinematicLightOpticalDepthSteps = 8;
+	CinematicInscatterSteps = 2;
+	CinematicTransmittanceScale = 1.0f;
+	CinematicMultiScatterStrength = 0.4f;
+	CinematicFeatureParticipation = 0.35f;
 	VolumeExtent = FVector(240.0f, 260.0f, 95.0f);
 	RaymarchTextureResolution = 48;
 	bRaymarchFitToDensityBounds = true;
 	bUseMRBNNCloudAxisMapping = true;
 	RaymarchBoundsThreshold = 2.0f;
 	RaymarchBoundsPadding = 0.12f;
+	RaymarchCloudFlowDirection = FVector(1.0, 0.15, 0.0);
+	RaymarchCloudFlowSpeed = 0.0f;
 	RaymarchStepCount = 22;
 	RaymarchInputThreshold = 6.0f;
 	RaymarchNormalizeDensity = 104.0f;
@@ -760,14 +819,19 @@ void AMRBNNVolumeActor::ApplyMobilePreviewSettings()
 	RaymarchPhaseG = 0.25f;
 	RaymarchPhaseStrength = 0.55f;
 	RaymarchEdgeSilverStrength = 0.35f;
+	RaymarchSilverLiningSharpness = 1.0f;
 	RaymarchDeepShadowStrength = 0.4f;
 	RaymarchPowderStrength = 0.3f;
 	bUseBakedFeatureLighting = true;
 	RaymarchBakedFeatureLevel = 1;
 	RaymarchBakedFeatureContribution = 0.45f;
 	RaymarchMultiScatterContribution = 0.5f;
+	RaymarchMultiScatterIsotropy = 0.45f;
 	RaymarchFeatureAlbedoBlend = 0.18f;
 	RaymarchBakedFeatureTint = FLinearColor(1.0f, 0.965f, 0.88f, 1.0f);
+	SceneSkyAtmosphereIntensityScale = 0.28f;
+	SceneFogContributionScale = 0.65f;
+	SceneColorContributionScale = 0.75f;
 	AmbientRelight = 0.18f;
 	DirectionalRelight = 1.0f;
 	bEditorPreviewRenderAttempted = false;
@@ -806,26 +870,39 @@ void AMRBNNVolumeActor::ApplyPaperPreviewSettings()
 	bAccumulateFrames = true;
 	MaxAccumulatedFrames = 128;
 	SpatialDenoisePasses = 2;
+	bUsePaperStyleCinematicPath = true;
+	CinematicLightOpticalDepthSteps = 24;
+	CinematicInscatterSteps = 4;
+	CinematicTransmittanceScale = 1.45f;
+	CinematicMultiScatterStrength = 1.15f;
+	CinematicFeatureParticipation = 0.85f;
 	VolumeExtent = FVector(240.0f, 260.0f, 95.0f);
 	RaymarchTextureResolution = 96;
 	bRaymarchFitToDensityBounds = true;
 	bUseMRBNNCloudAxisMapping = true;
 	RaymarchBoundsThreshold = 0.45f;
 	RaymarchBoundsPadding = 0.18f;
+	RaymarchCloudFlowDirection = FVector(1.0, 0.25, 0.04);
+	RaymarchCloudFlowSpeed = 0.018f;
 	RaymarchInputThreshold = 0.8f;
 	RaymarchNormalizeDensity = 88.0f;
 	RaymarchDensityPower = 0.62f;
-	RaymarchStepCount = 64;
+	RaymarchStepCount = 72;
 	RaymarchBakedFeatureLevel = 3;
-	RaymarchBakedFeatureContribution = 0.45f;
-	RaymarchMultiScatterContribution = 0.65f;
-	RaymarchFeatureAlbedoBlend = 0.22f;
+	RaymarchBakedFeatureContribution = 0.55f;
+	RaymarchMultiScatterContribution = 0.95f;
+	RaymarchMultiScatterIsotropy = 0.86f;
+	RaymarchFeatureAlbedoBlend = 0.26f;
 	RaymarchOpacity = 0.048f;
 	RaymarchShadowStrength = 0.62f;
 	RaymarchDirectShadowSteps = 6;
-	RaymarchEdgeSilverStrength = 0.72f;
+	RaymarchEdgeSilverStrength = 0.95f;
+	RaymarchSilverLiningSharpness = 2.35f;
 	RaymarchDeepShadowStrength = 0.68f;
 	RaymarchPowderStrength = 0.58f;
+	SceneSkyAtmosphereIntensityScale = 0.58f;
+	SceneFogContributionScale = 1.35f;
+	SceneColorContributionScale = 1.45f;
 	PreviewBrightness = 1.65f;
 	AmbientRelight = 0.18f;
 	DirectionalRelight = 1.45f;
@@ -1375,9 +1452,20 @@ FMRBNNComputeVolumeSettings AMRBNNVolumeActor::MakeComputeVolumeSettings() const
 	ComputeSettings.bUseBakedFeatures = bUseBakedFeatureLighting && RaymarchFeatureTexture;
 	ComputeSettings.BakedFeatureContribution = FMath::Clamp(RaymarchBakedFeatureContribution, 0.0f, 2.0f);
 	ComputeSettings.MultiScatterContribution = FMath::Clamp(RaymarchMultiScatterContribution, 0.0f, 2.0f);
+	ComputeSettings.MultiScatterIsotropy = FMath::Clamp(RaymarchMultiScatterIsotropy, 0.0f, 1.0f);
+	ComputeSettings.SilverLiningSharpness = FMath::Clamp(RaymarchSilverLiningSharpness, 0.25f, 4.0f);
+	ComputeSettings.SceneColorContribution = FMath::Clamp(SceneColorContributionScale, 0.0f, 3.0f);
+	ComputeSettings.CloudFlowDirection = RaymarchCloudFlowDirection.GetSafeNormal(UE_SMALL_NUMBER, FVector(1.0, 0.0, 0.0));
+	ComputeSettings.CloudFlowSpeed = FMath::Clamp(RaymarchCloudFlowSpeed, 0.0f, 0.25f);
 	ComputeSettings.FeatureAlbedoBlend = FMath::Clamp(RaymarchFeatureAlbedoBlend, 0.0f, 1.0f);
 	ComputeSettings.CloudColor = RaymarchCloudColor;
 	ComputeSettings.BakedFeatureTint = RaymarchBakedFeatureTint;
+	ComputeSettings.bUsePaperStyleCinematic = bUsePaperStyleCinematicPath;
+	ComputeSettings.CinematicLightOpticalDepthSteps = FMath::Clamp(CinematicLightOpticalDepthSteps, 1, 48);
+	ComputeSettings.CinematicInscatterSteps = FMath::Clamp(CinematicInscatterSteps, 1, 16);
+	ComputeSettings.CinematicTransmittanceScale = FMath::Clamp(CinematicTransmittanceScale, 0.1f, 4.0f);
+	ComputeSettings.CinematicMultiScatterStrength = FMath::Clamp(CinematicMultiScatterStrength, 0.0f, 3.0f);
+	ComputeSettings.CinematicFeatureParticipation = FMath::Clamp(CinematicFeatureParticipation, 0.0f, 1.0f);
 	return ComputeSettings;
 }
 
@@ -1433,7 +1521,211 @@ bool AMRBNNVolumeActor::BuildComputeRenderDescForView(const FSceneView& View, FM
 	OutDesc.RenderSettings.CameraPosition = CameraPosition;
 	OutDesc.RenderSettings.LightDirection = LightDirection;
 	OutDesc.bUseExplicitCamera = true;
+	BuildBoundedSceneLightingForView(View, OutDesc);
 	return true;
+}
+
+void AMRBNNVolumeActor::BuildBoundedSceneLightingForView(const FSceneView& View, FMRBNNComputeRenderer::FRenderDesc& InOutDesc)
+{
+	static_cast<void>(View);
+	InOutDesc.SceneSkyLightColorAndIntensity = FVector4f::Zero();
+	InOutDesc.SceneFogColorAndDensity = FVector4f::Zero();
+	InOutDesc.SceneAtmosphereParams = FVector4f::Zero();
+	InOutDesc.SceneLightCount = 0;
+	for (int32 LightIndex = 0; LightIndex < FMRBNNComputeRenderer::MaxSceneLightSamples; ++LightIndex)
+	{
+		InOutDesc.SceneLightPositionAndInvRadius[LightIndex] = FVector4f::Zero();
+		InOutDesc.SceneLightColorAndIntensity[LightIndex] = FVector4f::Zero();
+		InOutDesc.SceneLightDirectionAndSpot[LightIndex] = FVector4f::Zero();
+		InOutDesc.SceneLightTypeAndShape[LightIndex] = FVector4f::Zero();
+	}
+
+	UWorld* World = GetWorld();
+	if (!bUseBoundedSceneLighting || !World)
+	{
+		return;
+	}
+
+	const FTransform ActorTransform = GetActorTransform();
+	const FVector ActorLocation = GetActorLocation();
+	const int32 MaxLocalLightCount = FMath::Clamp(MaxSceneLocalLightSamples, 0, FMRBNNComputeRenderer::MaxSceneLightSamples);
+
+	for (TActorIterator<ASkyLight> It(World); It; ++It)
+	{
+		const ASkyLight* SkyLight = *It;
+		const USkyLightComponent* SkyLightComponent = SkyLight ? SkyLight->GetLightComponent() : nullptr;
+		if (!SkyLightComponent || !SkyLightComponent->bAffectsWorld || !SkyLightComponent->IsVisible())
+		{
+			continue;
+		}
+
+		const FLinearColor SkyColor = SkyLightComponent->GetLightColor() * FMath::Max(SkyLightComponent->Intensity, 0.0f);
+		InOutDesc.SceneSkyLightColorAndIntensity = FVector4f(
+			FMath::Max(SkyColor.R, 0.0f),
+			FMath::Max(SkyColor.G, 0.0f),
+			FMath::Max(SkyColor.B, 0.0f),
+			FMath::Max(SceneSkyAtmosphereIntensityScale, 0.0f));
+		break;
+	}
+
+	for (TActorIterator<AExponentialHeightFog> It(World); It; ++It)
+	{
+		const AExponentialHeightFog* FogActor = *It;
+		const UExponentialHeightFogComponent* FogComponent = FogActor ? FogActor->GetComponent() : nullptr;
+		if (!FogComponent || !FogComponent->IsVisible())
+		{
+			continue;
+		}
+
+		const FLinearColor FogColor = FogComponent->FogInscatteringLuminance + FogComponent->VolumetricFogEmissive;
+		const float FogDensity = FMath::Max(FogComponent->FogDensity, 0.0f) *
+			FMath::Clamp(FogComponent->FogMaxOpacity, 0.0f, 1.0f) *
+			FMath::Max(SceneFogContributionScale, 0.0f);
+		InOutDesc.SceneFogColorAndDensity = FVector4f(
+			FMath::Max(FogColor.R, 0.0f),
+			FMath::Max(FogColor.G, 0.0f),
+			FMath::Max(FogColor.B, 0.0f),
+			FogDensity);
+		break;
+	}
+
+	for (TActorIterator<ASkyAtmosphere> It(World); It; ++It)
+	{
+		const ASkyAtmosphere* SkyAtmosphere = *It;
+		const USkyAtmosphereComponent* SkyComponent = SkyAtmosphere ? SkyAtmosphere->GetComponent() : nullptr;
+		if (!SkyComponent || !SkyComponent->IsVisible())
+		{
+			continue;
+		}
+
+		const float SkyScale = FMath::Max(SceneSkyAtmosphereIntensityScale, 0.0f);
+		const FLinearColor AtmosphereTint = SkyComponent->SkyAndAerialPerspectiveLuminanceFactor;
+		InOutDesc.SceneAtmosphereParams = FVector4f(
+			FMath::Max(SkyComponent->MultiScatteringFactor, 0.0f) * SkyScale,
+			FMath::Max(SkyComponent->RayleighScatteringScale, 0.0f) * SkyScale,
+			FMath::Max(SkyComponent->MieScatteringScale, 0.0f) * SkyScale,
+			FMath::Max(SkyComponent->AerialPespectiveViewDistanceScale, 0.0f));
+		InOutDesc.SceneSkyLightColorAndIntensity.X += FMath::Max(AtmosphereTint.R, 0.0f) * 0.08f * SkyScale;
+		InOutDesc.SceneSkyLightColorAndIntensity.Y += FMath::Max(AtmosphereTint.G, 0.0f) * 0.08f * SkyScale;
+		InOutDesc.SceneSkyLightColorAndIntensity.Z += FMath::Max(AtmosphereTint.B, 0.0f) * 0.08f * SkyScale;
+		InOutDesc.SceneSkyLightColorAndIntensity.W = FMath::Max(InOutDesc.SceneSkyLightColorAndIntensity.W, SkyScale);
+		break;
+	}
+
+	TArray<FMRBNNBoundedSceneLightCandidate> LocalLights;
+	LocalLights.Reserve(MaxLocalLightCount);
+	for (TActorIterator<ALight> It(World); It; ++It)
+	{
+		const ALight* LightActor = *It;
+		const ULightComponent* LightComponent = LightActor ? LightActor->GetLightComponent() : nullptr;
+		const ULocalLightComponent* LocalLightComponent = Cast<ULocalLightComponent>(LightComponent);
+		if (!LightActor || !LightComponent || !LocalLightComponent || !LightComponent->bAffectsWorld || !LightComponent->IsVisible())
+		{
+			continue;
+		}
+
+		const float Radius = FMath::Max(LocalLightComponent->AttenuationRadius, 1.0f);
+		const float DistSq = FVector::DistSquared(ActorLocation, LightComponent->GetComponentLocation());
+		if (DistSq > FMath::Square(Radius + VolumeExtent.GetMax()))
+		{
+			continue;
+		}
+
+		FMRBNNBoundedSceneLightCandidate Candidate;
+		const float VolumeRadius = GetVolumeRadiusFromWorldRadius(VolumeExtent, Radius);
+		const FVector VolumePosition = TransformWorldPositionToVolumeUnitBox(ActorTransform, VolumeExtent, LightComponent->GetComponentLocation());
+		const FLinearColor LightEnergy = LightComponent->GetColoredLightBrightness();
+		const float DistanceAttenuation = FMath::Square(Radius) / FMath::Max(DistSq + FMath::Square(Radius * 0.25f), 1.0f);
+		Candidate.Score = GetLightLuminance(LightEnergy) * DistanceAttenuation * FMath::Max(LightComponent->VolumetricScatteringIntensity, 0.0f);
+		if (Candidate.Score <= UE_SMALL_NUMBER)
+		{
+			continue;
+		}
+
+		Candidate.PositionAndInvRadius = FVector4f(
+			static_cast<float>(VolumePosition.X),
+			static_cast<float>(VolumePosition.Y),
+			static_cast<float>(VolumePosition.Z),
+			1.0f / VolumeRadius);
+		Candidate.ColorAndIntensity = FVector4f(
+			FMath::Max(LightEnergy.R, 0.0f),
+			FMath::Max(LightEnergy.G, 0.0f),
+			FMath::Max(LightEnergy.B, 0.0f),
+			FMath::Max(SceneLocalLightIntensityScale, 0.0f) * FMath::Max(LightComponent->VolumetricScatteringIntensity, 0.0f));
+
+		if (const USpotLightComponent* SpotComponent = Cast<USpotLightComponent>(LightComponent))
+		{
+			const FVector SpotDirection = TransformWorldVectorToVolumeUnitBox(
+				ActorTransform,
+				VolumeExtent,
+				SpotComponent->GetDirection(),
+				FVector(1.0f, 0.0f, 0.0f));
+			Candidate.DirectionAndSpot = FVector4f(
+				static_cast<float>(SpotDirection.X),
+				static_cast<float>(SpotDirection.Y),
+				static_cast<float>(SpotDirection.Z),
+				FMath::Cos(FMath::DegreesToRadians(FMath::Clamp(SpotComponent->OuterConeAngle, 1.0f, 89.0f))));
+			Candidate.TypeAndShape = FVector4f(2.0f, FMath::Clamp(SpotComponent->InnerConeAngle / FMath::Max(SpotComponent->OuterConeAngle, 1.0f), 0.0f, 1.0f), 0.0f, 0.0f);
+		}
+		else if (const URectLightComponent* RectComponent = Cast<URectLightComponent>(LightComponent))
+		{
+			const FVector RectDirection = TransformWorldVectorToVolumeUnitBox(
+				ActorTransform,
+				VolumeExtent,
+				RectComponent->GetDirection(),
+				FVector(1.0f, 0.0f, 0.0f));
+			Candidate.DirectionAndSpot = FVector4f(
+				static_cast<float>(RectDirection.X),
+				static_cast<float>(RectDirection.Y),
+				static_cast<float>(RectDirection.Z),
+				0.0f);
+			Candidate.TypeAndShape = FVector4f(
+				3.0f,
+				GetVolumeRadiusFromWorldRadius(VolumeExtent, RectComponent->SourceWidth * 0.5f),
+				GetVolumeRadiusFromWorldRadius(VolumeExtent, RectComponent->SourceHeight * 0.5f),
+				0.0f);
+		}
+		else
+		{
+			Candidate.DirectionAndSpot = FVector4f::Zero();
+			Candidate.TypeAndShape = FVector4f(1.0f, 0.0f, 0.0f, 0.0f);
+		}
+
+		LocalLights.Add(Candidate);
+	}
+
+	LocalLights.Sort(
+		[](const FMRBNNBoundedSceneLightCandidate& Left, const FMRBNNBoundedSceneLightCandidate& Right)
+		{
+			return Left.Score > Right.Score;
+		});
+
+	InOutDesc.SceneLightCount = FMath::Min(MaxLocalLightCount, LocalLights.Num());
+	for (int32 LightIndex = 0; LightIndex < InOutDesc.SceneLightCount; ++LightIndex)
+	{
+		InOutDesc.SceneLightPositionAndInvRadius[LightIndex] = LocalLights[LightIndex].PositionAndInvRadius;
+		InOutDesc.SceneLightColorAndIntensity[LightIndex] = LocalLights[LightIndex].ColorAndIntensity;
+		InOutDesc.SceneLightDirectionAndSpot[LightIndex] = LocalLights[LightIndex].DirectionAndSpot;
+		InOutDesc.SceneLightTypeAndShape[LightIndex] = LocalLights[LightIndex].TypeAndShape;
+	}
+
+	uint32 SceneLightingHash = HashVector4f(0, InOutDesc.SceneSkyLightColorAndIntensity);
+	SceneLightingHash = HashVector4f(SceneLightingHash, InOutDesc.SceneFogColorAndDensity);
+	SceneLightingHash = HashVector4f(SceneLightingHash, InOutDesc.SceneAtmosphereParams);
+	for (int32 LightIndex = 0; LightIndex < FMRBNNComputeRenderer::MaxSceneLightSamples; ++LightIndex)
+	{
+		SceneLightingHash = HashVector4f(SceneLightingHash, InOutDesc.SceneLightPositionAndInvRadius[LightIndex]);
+		SceneLightingHash = HashVector4f(SceneLightingHash, InOutDesc.SceneLightColorAndIntensity[LightIndex]);
+		SceneLightingHash = HashVector4f(SceneLightingHash, InOutDesc.SceneLightDirectionAndSpot[LightIndex]);
+		SceneLightingHash = HashVector4f(SceneLightingHash, InOutDesc.SceneLightTypeAndShape[LightIndex]);
+	}
+	SceneLightingHash = FCrc::MemCrc32(&InOutDesc.SceneLightCount, sizeof(InOutDesc.SceneLightCount), SceneLightingHash);
+	if (bHasLastSceneLightingState && LastSceneLightingHash != SceneLightingHash)
+	{
+		ResetRenderState();
+	}
+	LastSceneLightingHash = SceneLightingHash;
+	bHasLastSceneLightingState = true;
 }
 
 void AMRBNNVolumeActor::EnsureComputeViewExtension()

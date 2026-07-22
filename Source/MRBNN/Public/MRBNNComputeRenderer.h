@@ -9,6 +9,8 @@ class FRDGBuilder;
 class FMRBNNComputeRenderer
 {
 public:
+	static constexpr int32 MaxSceneLightSamples = 4;
+
 	struct FRenderDesc
 	{
 		FTextureRHIRef DensityTexture;
@@ -22,6 +24,14 @@ public:
 		FVector3f CameraRight = FVector3f(0.0f, 1.0f, 0.0f);
 		FVector3f CameraUp = FVector3f(0.0f, 0.0f, 1.0f);
 		FVector2f TanHalfFov = FVector2f(0.48f, 0.48f);
+		FVector4f SceneSkyLightColorAndIntensity = FVector4f::Zero();
+		FVector4f SceneFogColorAndDensity = FVector4f::Zero();
+		FVector4f SceneAtmosphereParams = FVector4f::Zero();
+		FVector4f SceneLightPositionAndInvRadius[MaxSceneLightSamples] = { FVector4f::Zero(), FVector4f::Zero(), FVector4f::Zero(), FVector4f::Zero() };
+		FVector4f SceneLightColorAndIntensity[MaxSceneLightSamples] = { FVector4f::Zero(), FVector4f::Zero(), FVector4f::Zero(), FVector4f::Zero() };
+		FVector4f SceneLightDirectionAndSpot[MaxSceneLightSamples] = { FVector4f::Zero(), FVector4f::Zero(), FVector4f::Zero(), FVector4f::Zero() };
+		FVector4f SceneLightTypeAndShape[MaxSceneLightSamples] = { FVector4f::Zero(), FVector4f::Zero(), FVector4f::Zero(), FVector4f::Zero() };
+		int32 SceneLightCount = 0;
 		bool bUseExplicitCamera = false;
 		bool bCompositeOutput = false;
 		int32 FrameIndex = 0;

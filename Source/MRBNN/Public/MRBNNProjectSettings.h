@@ -61,6 +61,18 @@ public:
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Baking")
 	FDirectoryPath BakeDestinationRepositoryRoot;
 
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "ImGui Bake Console", meta = (DisplayName = "Auto Open On Editor Startup"))
+	bool bAutoOpenBakeConsoleOnEditorStartup = false;
+
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "ImGui Bake Console", meta = (DisplayName = "Bake Console Executable Override"))
+	FFilePath BakeConsoleExecutableOverride;
+
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Bake Sync", meta = (DisplayName = "Bake Sync Manifest"))
+	FFilePath BakeSyncManifestPath;
+
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Bake Sync", meta = (DisplayName = "Refresh Actors After Sync"))
+	bool bRefreshActorsAfterBakeSync = true;
+
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Debug")
 	bool bEnableVerboseLogging = false;
 

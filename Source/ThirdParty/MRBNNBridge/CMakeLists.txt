@@ -128,7 +128,7 @@ if(MRBNN_BUILD_BAKE_CONSOLE)
 	add_library(MRBNNBakeConsoleGlad STATIC "${MRBNN_ROOT}/src/display/glad/src/gl.c")
 	target_include_directories(MRBNNBakeConsoleGlad PUBLIC "${MRBNN_ROOT}/src/display/glad/include")
 
-	add_executable(MRBNNBakeConsole MRBNNBakeConsole.cpp)
+	add_executable(MRBNNBakeConsole MRBNNBakeConsole.cpp MRBNNCloudInfoBake.cu)
 	target_compile_features(MRBNNBakeConsole PRIVATE cxx_std_20)
 	target_link_libraries(MRBNNBakeConsole PRIVATE
 		MRBNNBridge

@@ -13,11 +13,11 @@ FVector4f ToVector4f(const FLinearColor& Color)
 	return FVector4f(Color.R, Color.G, Color.B, Color.A);
 }
 
-class FMRBNNComputeRenderCS final : public FGlobalShader
+class FMRBNNComputeRendererCS final : public FGlobalShader
 {
 public:
-	DECLARE_GLOBAL_SHADER(FMRBNNComputeRenderCS);
-	SHADER_USE_PARAMETER_STRUCT(FMRBNNComputeRenderCS, FGlobalShader);
+	DECLARE_GLOBAL_SHADER(FMRBNNComputeRendererCS);
+	SHADER_USE_PARAMETER_STRUCT(FMRBNNComputeRendererCS, FGlobalShader);
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		SHADER_PARAMETER_TEXTURE(Texture3D, DensityTexture)
@@ -32,6 +32,13 @@ public:
 		SHADER_PARAMETER(FVector2f, TanHalfFov)
 		SHADER_PARAMETER(FVector3f, LightDirection)
 		SHADER_PARAMETER(FVector4f, LightColor)
+		SHADER_PARAMETER(FVector4f, SceneSkyLightColorAndIntensity)
+		SHADER_PARAMETER(FVector4f, SceneFogColorAndDensity)
+		SHADER_PARAMETER(FVector4f, SceneAtmosphereParams)
+		SHADER_PARAMETER_ARRAY(FVector4f, SceneLightPositionAndInvRadius, [FMRBNNComputeRenderer::MaxSceneLightSamples])
+		SHADER_PARAMETER_ARRAY(FVector4f, SceneLightColorAndIntensity, [FMRBNNComputeRenderer::MaxSceneLightSamples])
+		SHADER_PARAMETER_ARRAY(FVector4f, SceneLightDirectionAndSpot, [FMRBNNComputeRenderer::MaxSceneLightSamples])
+		SHADER_PARAMETER_ARRAY(FVector4f, SceneLightTypeAndShape, [FMRBNNComputeRenderer::MaxSceneLightSamples])
 		SHADER_PARAMETER(FVector4f, Albedo)
 		SHADER_PARAMETER(FVector4f, CloudColor)
 		SHADER_PARAMETER(FVector4f, BakedFeatureTint)
@@ -40,7 +47,11 @@ public:
 		SHADER_PARAMETER(int32, bUseBakedFeatures)
 		SHADER_PARAMETER(int32, bUseExplicitCamera)
 		SHADER_PARAMETER(int32, bCompositeOutput)
+		SHADER_PARAMETER(int32, bUsePaperStyleCinematic)
+		SHADER_PARAMETER(int32, CinematicLightOpticalDepthSteps)
+		SHADER_PARAMETER(int32, CinematicInscatterSteps)
 		SHADER_PARAMETER(int32, FrameIndex)
+		SHADER_PARAMETER(int32, SceneLightCount)
 		SHADER_PARAMETER(float, Opacity)
 		SHADER_PARAMETER(float, Ambient)
 		SHADER_PARAMETER(float, Directional)
@@ -56,8 +67,15 @@ public:
 		SHADER_PARAMETER(float, PowderStrength)
 		SHADER_PARAMETER(float, BakedFeatureContribution)
 		SHADER_PARAMETER(float, MultiScatterContribution)
+		SHADER_PARAMETER(float, MultiScatterIsotropy)
+		SHADER_PARAMETER(float, SilverLiningSharpness)
+		SHADER_PARAMETER(float, SceneColorContribution)
+		SHADER_PARAMETER(FVector4f, CloudFlowDirectionAndSpeed)
 		SHADER_PARAMETER(float, FeatureAlbedoBlend)
-	END_SHADER_PARAMETER_STRUCT()
+		SHADER_PARAMETER(float, CinematicTransmittanceScale)
+		SHADER_PARAMETER(float, CinematicMultiScatterStrength)
+		SHADER_PARAMETER(float, CinematicFeatureParticipation)
+		END_SHADER_PARAMETER_STRUCT()
 
 	static constexpr int32 GroupSize = 8;
 
@@ -67,7 +85,7 @@ public:
 	}
 };
 
-IMPLEMENT_GLOBAL_SHADER(FMRBNNComputeRenderCS, "/Plugin/MRBNN/Private/MRBNNComputeRender.usf", "MainCS", SF_Compute);
+IMPLEMENT_GLOBAL_SHADER(FMRBNNComputeRendererCS, "/Plugin/MRBNN/Private/MRBNNComputeRender.usf", "MainCS", SF_Compute);
 
 bool AddMRBNNComputeRenderPass(FRDGBuilder& GraphBuilder, const FMRBNNComputeRenderer::FRenderDesc& Desc, FRDGTextureRef OutputTexture, const TCHAR* EventName)
 {
@@ -82,8 +100,8 @@ bool AddMRBNNComputeRenderPass(FRDGBuilder& GraphBuilder, const FMRBNNComputeRen
 		RenderDesc.FeatureTexture = RenderDesc.DensityTexture;
 	}
 
-	TShaderMapRef<FMRBNNComputeRenderCS> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel));
-	FMRBNNComputeRenderCS::FParameters* Parameters = GraphBuilder.AllocParameters<FMRBNNComputeRenderCS::FParameters>();
+	TShaderMapRef<FMRBNNComputeRendererCS> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel));
+	FMRBNNComputeRendererCS::FParameters* Parameters = GraphBuilder.AllocParameters<FMRBNNComputeRendererCS::FParameters>();
 	Parameters->DensityTexture = RenderDesc.DensityTexture.GetReference();
 	Parameters->FeatureTexture = RenderDesc.FeatureTexture.GetReference();
 	Parameters->VolumeSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
@@ -96,6 +114,17 @@ bool AddMRBNNComputeRenderPass(FRDGBuilder& GraphBuilder, const FMRBNNComputeRen
 	Parameters->TanHalfFov = RenderDesc.TanHalfFov;
 	Parameters->LightDirection = FVector3f(RenderDesc.RenderSettings.LightDirection.GetSafeNormal(UE_SMALL_NUMBER, FVector(0.35, 0.7, 0.62)));
 	Parameters->LightColor = ToVector4f(RenderDesc.RenderSettings.LightColor);
+	Parameters->SceneSkyLightColorAndIntensity = RenderDesc.SceneSkyLightColorAndIntensity;
+	Parameters->SceneFogColorAndDensity = RenderDesc.SceneFogColorAndDensity;
+	Parameters->SceneAtmosphereParams = RenderDesc.SceneAtmosphereParams;
+	Parameters->SceneLightCount = FMath::Clamp(RenderDesc.SceneLightCount, 0, FMRBNNComputeRenderer::MaxSceneLightSamples);
+	for (int32 LightIndex = 0; LightIndex < FMRBNNComputeRenderer::MaxSceneLightSamples; ++LightIndex)
+	{
+		Parameters->SceneLightPositionAndInvRadius[LightIndex] = RenderDesc.SceneLightPositionAndInvRadius[LightIndex];
+		Parameters->SceneLightColorAndIntensity[LightIndex] = RenderDesc.SceneLightColorAndIntensity[LightIndex];
+		Parameters->SceneLightDirectionAndSpot[LightIndex] = RenderDesc.SceneLightDirectionAndSpot[LightIndex];
+		Parameters->SceneLightTypeAndShape[LightIndex] = RenderDesc.SceneLightTypeAndShape[LightIndex];
+	}
 	Parameters->Albedo = ToVector4f(RenderDesc.RenderSettings.Albedo);
 	Parameters->CloudColor = ToVector4f(RenderDesc.ComputeSettings.CloudColor);
 	Parameters->BakedFeatureTint = ToVector4f(RenderDesc.ComputeSettings.BakedFeatureTint);
@@ -104,6 +133,9 @@ bool AddMRBNNComputeRenderPass(FRDGBuilder& GraphBuilder, const FMRBNNComputeRen
 	Parameters->bUseBakedFeatures = RenderDesc.ComputeSettings.bUseBakedFeatures ? 1 : 0;
 	Parameters->bUseExplicitCamera = RenderDesc.bUseExplicitCamera ? 1 : 0;
 	Parameters->bCompositeOutput = RenderDesc.bCompositeOutput ? 1 : 0;
+	Parameters->bUsePaperStyleCinematic = RenderDesc.ComputeSettings.bUsePaperStyleCinematic ? 1 : 0;
+	Parameters->CinematicLightOpticalDepthSteps = FMath::Clamp(RenderDesc.ComputeSettings.CinematicLightOpticalDepthSteps, 1, 48);
+	Parameters->CinematicInscatterSteps = FMath::Clamp(RenderDesc.ComputeSettings.CinematicInscatterSteps, 1, 16);
 	Parameters->FrameIndex = RenderDesc.FrameIndex;
 	Parameters->Opacity = FMath::Max(RenderDesc.ComputeSettings.Opacity, 0.0f);
 	Parameters->Ambient = FMath::Max(RenderDesc.ComputeSettings.Ambient, 0.0f);
@@ -120,9 +152,21 @@ bool AddMRBNNComputeRenderPass(FRDGBuilder& GraphBuilder, const FMRBNNComputeRen
 	Parameters->PowderStrength = FMath::Clamp(RenderDesc.ComputeSettings.PowderStrength, 0.0f, 2.0f);
 	Parameters->BakedFeatureContribution = FMath::Clamp(RenderDesc.ComputeSettings.BakedFeatureContribution, 0.0f, 2.0f);
 	Parameters->MultiScatterContribution = FMath::Clamp(RenderDesc.ComputeSettings.MultiScatterContribution, 0.0f, 2.0f);
+	Parameters->MultiScatterIsotropy = FMath::Clamp(RenderDesc.ComputeSettings.MultiScatterIsotropy, 0.0f, 1.0f);
+	Parameters->SilverLiningSharpness = FMath::Clamp(RenderDesc.ComputeSettings.SilverLiningSharpness, 0.25f, 4.0f);
+	Parameters->SceneColorContribution = FMath::Clamp(RenderDesc.ComputeSettings.SceneColorContribution, 0.0f, 3.0f);
+	const FVector FlowDirection = RenderDesc.ComputeSettings.CloudFlowDirection.GetSafeNormal(UE_SMALL_NUMBER, FVector(1.0, 0.0, 0.0));
+	Parameters->CloudFlowDirectionAndSpeed = FVector4f(
+		static_cast<float>(FlowDirection.X),
+		static_cast<float>(FlowDirection.Y),
+		static_cast<float>(FlowDirection.Z),
+		FMath::Clamp(RenderDesc.ComputeSettings.CloudFlowSpeed, 0.0f, 0.25f));
 	Parameters->FeatureAlbedoBlend = FMath::Clamp(RenderDesc.ComputeSettings.FeatureAlbedoBlend, 0.0f, 1.0f);
+	Parameters->CinematicTransmittanceScale = FMath::Clamp(RenderDesc.ComputeSettings.CinematicTransmittanceScale, 0.1f, 4.0f);
+	Parameters->CinematicMultiScatterStrength = FMath::Clamp(RenderDesc.ComputeSettings.CinematicMultiScatterStrength, 0.0f, 3.0f);
+	Parameters->CinematicFeatureParticipation = FMath::Clamp(RenderDesc.ComputeSettings.CinematicFeatureParticipation, 0.0f, 1.0f);
 
-	const FIntVector GroupCount = FComputeShaderUtils::GetGroupCount(RenderDesc.OutputSize, FMRBNNComputeRenderCS::GroupSize);
+	const FIntVector GroupCount = FComputeShaderUtils::GetGroupCount(RenderDesc.OutputSize, FMRBNNComputeRendererCS::GroupSize);
 	FComputeShaderUtils::AddPass(
 		GraphBuilder,
 		RDG_EVENT_NAME("%s", EventName),

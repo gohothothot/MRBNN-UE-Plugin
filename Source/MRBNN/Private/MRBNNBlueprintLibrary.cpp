@@ -2,6 +2,7 @@
 
 #include "Dom/JsonObject.h"
 #include "HAL/FileManager.h"
+#include "HAL/PlatformFileManager.h"
 #include "Interfaces/IPluginManager.h"
 #include "MRBNNProjectSettings.h"
 #include "Misc/FileHelper.h"
@@ -32,6 +33,72 @@ FString NormalizePath(FString Path)
 	return Path;
 }
 
+bool IsPathInsideRoot(const FString& CandidatePath, const FString& RootPath)
+{
+	FString Candidate = NormalizePath(CandidatePath);
+	FString Root = NormalizePath(RootPath);
+	FPaths::MakeStandardFilename(Candidate);
+	FPaths::MakeStandardFilename(Root);
+	if (Candidate.Equals(Root, ESearchCase::IgnoreCase))
+	{
+		return true;
+	}
+
+	if (!Root.EndsWith(TEXT("/")))
+	{
+		Root += TEXT("/");
+	}
+	return Candidate.StartsWith(Root, ESearchCase::IgnoreCase);
+}
+
+bool IsSafeRelativePath(const FString& RelativePath)
+{
+	FString NormalizedPath = RelativePath;
+	FPaths::NormalizeFilename(NormalizedPath);
+	if (NormalizedPath.IsEmpty() || !FPaths::IsRelative(NormalizedPath) || NormalizedPath.Contains(TEXT(":")))
+	{
+		return false;
+	}
+
+	TArray<FString> PathParts;
+	NormalizedPath.ParseIntoArray(PathParts, TEXT("/"), true);
+	for (const FString& PathPart : PathParts)
+	{
+		if (PathPart == TEXT(".."))
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
+
+bool ValidateNoSymlinkInExistingPath(const FString& Path, FText& OutError)
+{
+	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformPhysical();
+	FString CurrentPath = NormalizePath(Path);
+	for (;;)
+	{
+		if (PlatformFile.FileExists(*CurrentPath) || PlatformFile.DirectoryExists(*CurrentPath))
+		{
+			const ESymlinkResult SymlinkResult = PlatformFile.IsSymlink(*CurrentPath);
+			if (SymlinkResult == ESymlinkResult::Symlink)
+			{
+				OutError = FText::Format(NSLOCTEXT("MRBNN", "BakeSymlinkPathRejected", "MRBNN bake refuses to copy through a symlink or junction: {0}"), FText::FromString(CurrentPath));
+				return false;
+			}
+		}
+
+		const FString ParentPath = FPaths::GetPath(CurrentPath);
+		if (ParentPath.IsEmpty() || ParentPath.Equals(CurrentPath, ESearchCase::IgnoreCase))
+		{
+			return true;
+		}
+
+		CurrentPath = ParentPath;
+	}
+}
+
 bool CopyFileEnsuringDirectory(const FString& SourcePath, const FString& DestinationPath, FText& OutError)
 {
 	if (!FPaths::FileExists(SourcePath))
@@ -40,11 +107,26 @@ bool CopyFileEnsuringDirectory(const FString& SourcePath, const FString& Destina
 		return false;
 	}
 
-	IFileManager& FileManager = IFileManager::Get();
-	FileManager.MakeDirectory(*FPaths::GetPath(DestinationPath), true);
-	if (FileManager.Copy(*DestinationPath, *SourcePath, true, true) != COPY_OK)
+	const FString NormalizedSourcePath = NormalizePath(SourcePath);
+	const FString NormalizedDestinationPath = NormalizePath(DestinationPath);
+	if (NormalizedSourcePath.Equals(NormalizedDestinationPath, ESearchCase::IgnoreCase))
 	{
-		OutError = FText::Format(NSLOCTEXT("MRBNN", "BakeCopyFailed", "Failed to copy MRBNN bake file from {0} to {1}."), FText::FromString(SourcePath), FText::FromString(DestinationPath));
+		return true;
+	}
+	if (!ValidateNoSymlinkInExistingPath(NormalizedSourcePath, OutError))
+	{
+		return false;
+	}
+
+	IFileManager& FileManager = IFileManager::Get();
+	FileManager.MakeDirectory(*FPaths::GetPath(NormalizedDestinationPath), true);
+	if (!ValidateNoSymlinkInExistingPath(NormalizedDestinationPath, OutError))
+	{
+		return false;
+	}
+	if (FileManager.Copy(*NormalizedDestinationPath, *NormalizedSourcePath, true, true) != COPY_OK)
+	{
+		OutError = FText::Format(NSLOCTEXT("MRBNN", "BakeCopyFailed", "Failed to copy MRBNN bake file from {0} to {1}."), FText::FromString(NormalizedSourcePath), FText::FromString(NormalizedDestinationPath));
 		return false;
 	}
 
@@ -226,7 +308,20 @@ bool UMRBNNBlueprintLibrary::BakeMRBNNDataToPluginData(UMRBNNBakedVolumeData* So
 				RelativeVolumePath = VolumePath;
 			}
 
-			if (!CopyFileEnsuringDirectory(SourceVolumePath, NormalizePath(FPaths::Combine(DestinationRepositoryRoot, RelativeVolumePath)), OutError))
+			if (!IsPathInsideRoot(SourceVolumePath, SourceRepositoryRoot) || !IsSafeRelativePath(RelativeVolumePath))
+			{
+				OutError = FText::Format(NSLOCTEXT("MRBNN", "BakeUnsafeVolumePath", "MRBNN volume path is outside the source repository or is not a safe relative path: {0}"), FText::FromString(VolumePath));
+				return false;
+			}
+
+			const FString DestinationVolumePath = NormalizePath(FPaths::Combine(DestinationRepositoryRoot, RelativeVolumePath));
+			if (!IsPathInsideRoot(DestinationVolumePath, DestinationRepositoryRoot))
+			{
+				OutError = FText::Format(NSLOCTEXT("MRBNN", "BakeVolumeDestinationOutsideRoot", "MRBNN volume destination is outside the plugin data root: {0}"), FText::FromString(DestinationVolumePath));
+				return false;
+			}
+
+			if (!CopyFileEnsuringDirectory(SourceVolumePath, DestinationVolumePath, OutError))
 			{
 				return false;
 			}
@@ -245,7 +340,20 @@ bool UMRBNNBlueprintLibrary::BakeMRBNNDataToPluginData(UMRBNNBakedVolumeData* So
 		{
 			FString RelativeSkyboxPath;
 			TryMakeRelativeToRoot(SourceSkyboxPath, SourceRepositoryRoot, RelativeSkyboxPath);
-			if (!CopyFileEnsuringDirectory(SourceSkyboxPath, NormalizePath(FPaths::Combine(DestinationRepositoryRoot, RelativeSkyboxPath)), OutError))
+			if (!IsPathInsideRoot(SourceSkyboxPath, SourceRepositoryRoot) || !IsSafeRelativePath(RelativeSkyboxPath))
+			{
+				OutError = FText::Format(NSLOCTEXT("MRBNN", "BakeUnsafeSkyboxPath", "MRBNN skybox path is outside the source repository or is not a safe relative path: {0}"), FText::FromString(SourceSkyboxPath));
+				return false;
+			}
+
+			const FString DestinationSkyboxPath = NormalizePath(FPaths::Combine(DestinationRepositoryRoot, RelativeSkyboxPath));
+			if (!IsPathInsideRoot(DestinationSkyboxPath, DestinationRepositoryRoot))
+			{
+				OutError = FText::Format(NSLOCTEXT("MRBNN", "BakeSkyboxDestinationOutsideRoot", "MRBNN skybox destination is outside the plugin data root: {0}"), FText::FromString(DestinationSkyboxPath));
+				return false;
+			}
+
+			if (!CopyFileEnsuringDirectory(SourceSkyboxPath, DestinationSkyboxPath, OutError))
 			{
 				return false;
 			}

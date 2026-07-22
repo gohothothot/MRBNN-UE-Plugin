@@ -13,6 +13,11 @@
 			"Name": "MRBNN",
 			"Type": "Runtime",
 			"LoadingPhase": "PostConfigInit"
+		},
+		{
+			"Name": "MRBNNEditor",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
 		}
 	]
 }

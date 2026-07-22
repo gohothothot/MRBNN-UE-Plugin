@@ -24,3 +24,8 @@
 *.log
 *.tmp
 *.ppm
+
+# Local ImGui state and generated bake/sync manifests.
+/imgui.ini
+/Data/*/mrbnn_bake_sync_manifest.json
+/Data/*/mrbnn_ue_manifest.json

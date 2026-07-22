@@ -16,7 +16,7 @@ Unreal Engine runtime plugin for previewing Extra-Creativity MRBNN volumetric da
 
 The default visible path does not require the native CUDA bridge. It reads the bundled density volume, builds transient density and baked-feature `UVolumeTexture` objects, dispatches a UE GlobalShader compute pass, and composites the result into the scene through `FSceneViewExtensionBase` after tonemapping.
 
-The UE-native compute renderer is an approximation of the MRBNN paper path, not the full TCNN decoder. It uses the density field plus spatial baked proxy features derived from `base.bin`, `ms0.bin`, and `ms1.bin`; per-actor controls blend those features into ambient multi-scattering, phase response, tint, direct-light shadowing, edge silver lining, deep-volume absorption, and powder-style cloud scattering. The optional CUDA bridge remains the reference path for full neural-decoder parity work.
+The UE-native compute renderer is an approximation of the MRBNN paper path, not the full TCNN decoder. It uses the density field plus spatial baked proxy features derived from `base.bin`, `ms0.bin`, and `ms1.bin`; per-actor controls blend those features into ambient multi-scattering, phase response, tint, direct-light shadowing, edge silver lining, deep-volume absorption, and powder-style cloud scattering. The SceneView path also sends a bounded UE scene-light summary to the shader: the assigned/autofound directional light, the first visible skylight, exponential-height-fog tint/density, SkyAtmosphere scalar art-direction values, and up to four ranked local point, spot, or rect lights. This is analytic shader lighting, not a full UE renderer light pass. It does not sample UE shadow maps, SkyAtmosphere LUTs, local light functions, IES profiles, rect source textures, volumetric fog grids, or reflection captures. The optional CUDA bridge remains the reference path for full neural-decoder parity work.
 
 ## Install
 
@@ -90,9 +90,11 @@ Use a CUDA toolkit/runtime that is supported by the installed NVIDIA driver. If 
 
 The smoke test writes a preview image plus raw float RGBA buffers next to the deployed DLLs. Use `MRBNNBridgeSmokeTest.ppm.rgba32f` and `MRBNNBridgeSmokeTest.ppm.denoised.rgba32f` as numeric references for later UE-native shader work. The bridge deployment also copies `Network.kernel`, which `ExternalTCNN.dll` needs when generating the fused CUDA kernel at runtime.
 
-`MRBNNBakeConsole.exe` is a standalone Dear ImGui CUDA-side tool deployed next to the bridge DLLs. Use it for reference rendering, skybox bake debugging, output buffer inspection, and packaging MRBNN working-directory data into the plugin `Data/` folder. Unreal remains the runtime preview surface: actor Details own per-cloud shape, density, lighting, and quality, while Project Settings only keeps global paths and SceneView RT debug switches.
+`MRBNNBakeConsole.exe` is a standalone Dear ImGui CUDA-side tool deployed next to the bridge DLLs. Use it for reference rendering, skybox bake debugging, output buffer inspection, local Cloud Info baking, and packaging MRBNN working-directory data into the plugin `Data/` folder. The console has an English/Simplified Chinese language selector, tabbed Setup/Render/Cloud Bake/Actions workflow, and cloud-shape generator presets (`source_volume`, `cumulus_core`, `anvil_tower`, `layer_bank`, `wispy_streaks`) with seed/coverage/height/thickness/detail/shear controls. The Cloud Bake/Sync tab writes `mrbnn_bake_sync_manifest.json` next to the RGBA32F Cloud Info output and can copy it to the active work directory for Unreal import. Unreal remains the runtime preview surface: actor Details own per-cloud shape, density, lighting, and quality, while Project Settings only keeps global paths and SceneView RT debug switches.
 
-For the closest available UE-native preview inside Unreal, place or select an `MRBNNVolumeActor` and run `Apply Paper Preview Settings`. The actor uses the SceneViewExtension compute composite path by default, keeps only `SceneRoot`, `VolumeBounds`, and `MRBNNVolume` in the component tree, and drives lighting from the assigned or auto-found scene `DirectionalLight`. Use the CUDA/TCNN bridge smoke outputs as numeric and visual references while migrating the remaining neural decoder pieces into UE shaders.
+In Unreal, the editor-only `MRBNN` toolbar button launches the bake console, and `Sync MRBNN` imports the latest `mrbnn_bake_sync_manifest.json` back into plugin `Data/<scene>`, copies Cloud Info sidecars when present, updates MRBNN Project Settings, and refreshes MRBNN actors when enabled.
+
+For the closest available UE-native preview inside Unreal, place or select an `MRBNNVolumeActor` and run `Apply Paper Preview Settings`. The actor uses the SceneViewExtension compute composite path by default, keeps only `SceneRoot`, `VolumeBounds`, and `MRBNNVolume` in the component tree, drives its key light from the assigned or auto-found scene `DirectionalLight`, and can add bounded scene-light contributions from skylight, fog, atmosphere, and nearby local lights. Use the CUDA/TCNN bridge smoke outputs as numeric and visual references while migrating the remaining neural decoder pieces into UE shaders.
 
 ## Debug SceneView RT
 
@@ -108,4 +110,4 @@ D:\_Gohot-UE\Engine\Binaries\Win64\UnrealEditor-Cmd.exe D:\_Gohot-UE\Projects\MR
 
 ## More docs
 
-See `Docs/MRBNN_UE_Integration.md` for the full integration notes.
+See `Docs/MRBNN_UE_Integration.md` for the full integration notes and `Docs/MRBNN_Sky_RT_Architecture.md` for the planned sky-filling render-target component architecture.

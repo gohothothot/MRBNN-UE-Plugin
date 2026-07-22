@@ -50,6 +50,8 @@ UMRBNNProjectSettings::UMRBNNProjectSettings()
 	DefaultSceneName = TEXT("cloud-03");
 	DefaultSkyboxHDRI.FilePath = TEXT("$(PluginDir)/Data/qwantani_sunset_puresky_4k.hdr");
 	BakeDestinationRepositoryRoot.Path = TEXT("$(PluginDir)");
+	BakeConsoleExecutableOverride.FilePath = TEXT("$(PluginDir)/Binaries/ThirdParty/MRBNNBridge/Win64/MRBNNBakeConsole.exe");
+	BakeSyncManifestPath.FilePath = TEXT("$(PluginDir)/Binaries/ThirdParty/MRBNNBridge/Win64/CloudInfoBakes/mrbnn_bake_sync_manifest.json");
 }
 
 const UMRBNNProjectSettings* UMRBNNProjectSettings::Get()
